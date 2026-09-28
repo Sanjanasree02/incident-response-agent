@@ -3,7 +3,9 @@
 Replays each ShopFast fault twice through the agent's real flow (detect -> analyze -> remediate -> verify ->
 record): first with an empty memory bank (BEFORE), then after all BEFORE outcomes were recorded (AFTER).
 ShopFast runs in-process; Groq and Hindsight are real. Approvals are given by this harness, so the numbers
-measure the agent's choices; the UI keeps its human approval gate.
+measure the agent's choices; the UI keeps its human approval gate. When the agent proposes no action, the harness
+plays an engineer without memory who tries the runbook in listed order; those actions are counted separately and
+recorded like any other, so the agent can learn from them.
 
 Run (always against a fresh bank; the main bank is refused so demo memory stays clean):
   python -m scripts.evaluate_learning --bank-id shopfast-incidents-eval1
@@ -25,7 +27,7 @@ from agent.service import IncidentService
 from shopfast.faults import Fault
 
 MAIN_BANK = "shopfast-incidents"
-MAX_ATTEMPTS = 4
+MAX_ATTEMPTS = 8
 RESULTS_FILE = Path(__file__).resolve().parent.parent / "data" / "evaluation_results.json"
 
 
@@ -36,6 +38,7 @@ class RoundResult:
     memory_used: bool
     relevant_incidents: list[str]
     actions_tried: list[str] = field(default_factory=list)
+    engineer_actions: list[str] = field(default_factory=list)  # tried by the engineer fallback, not the agent
     resolved: bool = False
     llm_errors: int = 0
 
@@ -50,6 +53,11 @@ class RoundResult:
     @property
     def first_try_fix(self) -> bool:
         return self.resolved and self.attempts == 1
+
+    @property
+    def agent_fixed(self) -> bool:
+        """Resolved by an action the agent itself proposed."""
+        return self.resolved and self.actions_tried[-1] not in self.engineer_actions
 
     @property
     def successful_action(self) -> str | None:
@@ -99,11 +107,19 @@ def run_round(service: IncidentService, admin: httpx.Client, fault: Fault, max_a
         result = RoundResult(fault=fault.value, incident_id=incident.incident_id, memory_used=suggestion.memory_used,
                              relevant_incidents=[s.incident_id for s in suggestion.similar_incidents])
         attempts: list[RemediationAttempt] = []
+        runbook = [a["name"] for a in admin.get("/ops/actions").json()]
         while True:
             result.llm_errors += suggestion.llm_error is not None
-            if not suggestion.proposed_action or len(attempts) == max_attempts:
+            if len(attempts) == max_attempts:
                 break
-            attempt = service.remediate(incident, suggestion, approved=True, previous_attempts=attempts)
+            engineer_choice = None
+            if not suggestion.proposed_action:
+                engineer_choice = next((a for a in runbook if a not in result.actions_tried), None)
+                if engineer_choice is None:
+                    break
+                result.engineer_actions.append(engineer_choice)
+            attempt = service.remediate(incident, suggestion, approved=True, previous_attempts=attempts,
+                                        action=engineer_choice)
             attempts.append(attempt)
             result.actions_tried.append(attempt.action)
             if attempt.verified:
@@ -133,6 +149,10 @@ def summarize(comparisons: Sequence[Comparison]) -> dict:
         "attempts_after": sum(r.attempts for r in after),
         "failed_fixes_before": sum(len(r.failed_actions) for r in before),
         "failed_fixes_avoided_after": sum(len(c.failed_fixes_avoided) for c in comparisons),
+        "agent_fixed_before": sum(r.agent_fixed for r in before),
+        "agent_fixed_after": sum(r.agent_fixed for r in after),
+        "engineer_actions_before": sum(len(r.engineer_actions) for r in before),
+        "engineer_actions_after": sum(len(r.engineer_actions) for r in after),
         "llm_errors": sum(r.llm_errors for r in before + after),
         "approvals": "given by the evaluation harness",
     }
@@ -206,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     admin = TestClient(shop.app)
     with IncidentMemory(settings) as memory:
         memory.ensure_bank()
+        memory.ensure_runbook()
         service = IncidentService(memory, IncidentAdvisor(settings), ShopFastClient(admin))
         report = evaluate(service, admin, list(Fault), wait=lambda: time.sleep(args.wait),
                           pause=lambda: time.sleep(args.pause))

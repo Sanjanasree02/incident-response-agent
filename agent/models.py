@@ -118,6 +118,7 @@ class RemediationAttempt(BaseModel):
     action: str
     description: str
     reason: str = ""
+    chosen_by: str = Field(default="agent", pattern=r"^(agent|engineer)$")
     approved: bool
     executed: bool
     verified: bool
@@ -166,3 +167,33 @@ class Suggestion(BaseModel):
     proposed_action: str | None = None  # allow-listed runbook action; runs only after human approval
     action_reason: str = ""
     action_evidence: list[ActionEvidence] = Field(default_factory=list)
+
+
+TextItem = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_TEXT_CHARS)]
+
+
+class Postmortem(BaseModel):
+    """Blameless postmortem written by Hindsight reflect over the incident and the whole memory bank."""
+
+    incident_id: str = Field(pattern=INCIDENT_ID_PATTERN)
+    summary: TextItem
+    impact: TextItem
+    root_cause: TextItem
+    timeline: list[TextItem] = Field(default_factory=list, max_length=30)
+    what_went_well: list[TextItem] = Field(default_factory=list, max_length=20)
+    what_went_wrong: list[TextItem] = Field(default_factory=list, max_length=20)
+    action_items: list[TextItem] = Field(default_factory=list, max_length=20)
+    related_incidents: list[str] = Field(default_factory=list, max_length=20)
+    saved_to_memory: bool = False
+
+    def to_text(self) -> str:
+        """Plain-text form: stored in memory and offered as a download."""
+        lines = [f"Postmortem for incident {self.incident_id}", f"Summary: {self.summary}",
+                 f"Impact: {self.impact}", f"Root cause: {self.root_cause}"]
+        for heading, items in (("Timeline", self.timeline), ("What went well", self.what_went_well),
+                               ("What went wrong", self.what_went_wrong), ("Action items", self.action_items)):
+            if items:
+                lines += [f"{heading}:", *(f"* {item}" for item in items)]
+        if self.related_incidents:
+            lines.append(f"Related past incidents: {', '.join(self.related_incidents)}")
+        return "\n".join(lines)

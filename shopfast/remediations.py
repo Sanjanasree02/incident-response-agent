@@ -27,6 +27,8 @@ ACTIONS: dict[str, Remediation] = {
         "Turn off the cart analytics feature flag, which scans Redis keys",
         frozenset({Fault.REDIS_TIMEOUT}),
     ),
+    "raise_redis_client_timeout": Remediation("Raise the cart-service Redis client read timeout from 1 s to 5 s"),
+    "failover_cart_redis": Remediation("Fail the cart Redis over to its replica"),
     "resync_gateway_clocks": Remediation(
         "Re-enable NTP time sync on api-gateway nodes",
         frozenset({Fault.AUTH_TOKEN_EXPIRED}),

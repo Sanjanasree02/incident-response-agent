@@ -9,7 +9,7 @@ from hindsight_client import Hindsight
 
 from agent.config import Settings
 from agent.log_normalizer import normalize_log
-from agent.models import HistoricalIncident, Incident, LearnedPattern, Outcome, SimilarIncident
+from agent.models import HistoricalIncident, Incident, LearnedPattern, Outcome, Postmortem, SimilarIncident
 
 BANK_MISSION = (
     "You are the incident memory for ShopFast, an e-commerce platform. "
@@ -19,6 +19,29 @@ RETAIN_MISSION = (
     "Extract each incident's ID, service, symptoms, error signature, root cause, the fix steps that worked "
     "and the fix attempts that did not work. Always keep the incident ID with each fact."
 )
+
+RUNBOOK_ID = "shopfast-runbook"
+RUNBOOK_NAME = "ShopFast living runbook"
+RUNBOOK_QUERY = (
+    "For each kind of ShopFast failure seen so far (error signature and service): which runbook actions or fix "
+    "steps worked, which failed, and the lesson. Cite incident IDs. Use a table."
+)
+POSTMORTEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "impact": {"type": "string"},
+        "root_cause": {"type": "string"},
+        "timeline": {"type": "array", "items": {"type": "string"}},
+        "what_went_well": {"type": "array", "items": {"type": "string"}},
+        "what_went_wrong": {"type": "array", "items": {"type": "string"}},
+        "action_items": {"type": "array", "items": {"type": "string"}},
+        "related_incidents": {"type": "array", "items": {"type": "string"},
+                              "description": "IDs of past incidents in memory with the same failure"},
+    },
+    "required": ["summary", "impact", "root_cause", "timeline", "what_went_well", "what_went_wrong",
+                 "action_items", "related_incidents"],
+}
 
 # "world" = stored incident facts; "observation" = patterns Hindsight consolidates across incidents.
 INCIDENT_FACT_TYPES = ["world"]
@@ -152,7 +175,8 @@ class IncidentMemory:
         ))
         chunks = response.chunks or {}
         facts: dict[str, list[str]] = {}
-        sources: dict[str, str] = {}
+        # An incident's document can hold several chunks: the recorded outcome and, appended later, its postmortem.
+        sources: dict[str, list[str]] = {}
         for result in response.results:
             incident_id = result.document_id or _first_incident_id(result.text)
             if not incident_id or incident_id == incident.incident_id:
@@ -161,10 +185,10 @@ class IncidentMemory:
                 continue
             facts.setdefault(incident_id, []).append(result.text)
             chunk = chunks.get(result.chunk_id) if result.chunk_id else None
-            if chunk and incident_id not in sources:
-                sources[incident_id] = chunk.text
+            if chunk and chunk.text not in sources.setdefault(incident_id, []):
+                sources[incident_id].append(chunk.text)
         return [
-            SimilarIncident(incident_id=i, summary=" ".join(texts), source_text=sources.get(i, ""))
+            SimilarIncident(incident_id=i, summary=" ".join(texts), source_text="\n\n".join(sources.get(i, [])))
             for i, texts in facts.items()
         ]
 
@@ -177,6 +201,65 @@ class IncidentMemory:
         ))
         texts = list(dict.fromkeys(result.text for result in response.results))
         return [LearnedPattern(text=text) for text in texts[:limit]]
+
+
+    def search(self, query: str, limit: int = 10) -> list[str]:
+        """Raw incident facts for a free-text question, for tools such as the MCP server."""
+        response = self._call("recall", lambda: self._client.recall(self._bank_id, query, types=INCIDENT_FACT_TYPES))
+        return list(dict.fromkeys(result.text for result in response.results))[:limit]
+
+    def reflect_postmortem(self, incident: Incident, context: str) -> Postmortem:
+        """Ask Hindsight reflect to write a blameless postmortem, reasoning over this incident and the whole bank."""
+        query = (f"Write a blameless postmortem for incident {incident.incident_id}. Use the incident record in the "
+                 "context and past incidents in memory: find related incidents with the same failure, say whether "
+                 "this failure has happened before and what was learned, and propose concrete action items.")
+        response = self._call("reflect", lambda: self._client.reflect(
+            self._bank_id, query, budget="mid", context=context, max_tokens=2000, response_schema=POSTMORTEM_SCHEMA,
+        ))
+        data = response.structured_output
+        if not isinstance(data, dict):
+            raise IncidentMemoryError(f"Hindsight reflect returned no postmortem for bank {self._bank_id!r}: "
+                                      f"{response.structured_output_error or 'empty output'}")
+        cited = _INCIDENT_ID_IN_TEXT.findall(" ".join(map(str, data.get("related_incidents") or [])))
+        related = [i for i in dict.fromkeys(cited) if i != incident.incident_id]
+        try:
+            return Postmortem.model_validate({**data, "incident_id": incident.incident_id,
+                                              "related_incidents": related})
+        except ValueError as exc:
+            raise IncidentMemoryError(f"Hindsight reflect returned an invalid postmortem: {exc}") from exc
+
+    def retain_postmortem(self, incident: Incident, postmortem: Postmortem) -> None:
+        """Append the postmortem to the incident's document, so later recalls of the incident include its lessons."""
+        self._call("retain", lambda: self._client.retain(
+            self._bank_id,
+            postmortem.to_text(),
+            timestamp=incident.reported_at,
+            context="ShopFast incident postmortem",
+            document_id=incident.incident_id,
+            metadata={"service": incident.service, "severity": incident.severity.value, "kind": "postmortem"},
+            update_mode="append",
+        ))
+
+    def _has_runbook(self) -> bool:
+        existing = self._call("list_mental_models", lambda: self._client.list_mental_models(self._bank_id))
+        return any(model.id == RUNBOOK_ID for model in existing.items)
+
+    def ensure_runbook(self) -> None:
+        """Create the living runbook: a Hindsight mental model that re-writes itself after each consolidation."""
+        if self._has_runbook():
+            return
+        self._call("create_mental_model", lambda: self._client.create_mental_model(
+            self._bank_id, name=RUNBOOK_NAME, source_query=RUNBOOK_QUERY, id=RUNBOOK_ID, max_tokens=1500,
+            trigger={"refresh_after_consolidation": True},
+        ))
+
+    def get_runbook(self) -> str | None:
+        """The living runbook's current text, or None when it was not created yet."""
+        if not self._has_runbook():
+            return None
+        model = self._call("get_mental_model", lambda: self._client.get_mental_model(
+            self._bank_id, RUNBOOK_ID, detail="content"))
+        return model.content or ""
 
 
 def _first_incident_id(text: str) -> str | None:

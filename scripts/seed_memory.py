@@ -37,6 +37,11 @@ def seed(memory: IncidentMemory, incidents: list[HistoricalIncident]) -> list[st
         except IncidentMemoryError as exc:
             failed.append(incident.incident_id)
             print(f"  FAILED {incident.incident_id}: {exc}", file=sys.stderr)
+    try:
+        memory.ensure_runbook()
+        print("  living runbook (mental model) ready")
+    except IncidentMemoryError as exc:
+        print(f"  living runbook not created: {exc}", file=sys.stderr)
     return failed
 
 

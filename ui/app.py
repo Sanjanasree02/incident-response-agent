@@ -18,11 +18,12 @@ from agent.actions import ShopFastClient, ShopFastError  # noqa: E402
 from agent.config import ConfigError, load_settings  # noqa: E402
 from agent.llm import IncidentAdvisor  # noqa: E402
 from agent.memory import IncidentMemory, IncidentMemoryError  # noqa: E402
-from agent.models import Incident, Outcome, RemediationAttempt, Severity, Suggestion  # noqa: E402
+from agent.models import Incident, Outcome, Postmortem, RemediationAttempt, Severity, Suggestion  # noqa: E402
 from agent.service import IncidentService  # noqa: E402
 from shopfast.faults import FAULT_LOGS, Fault  # noqa: E402
 
 EVAL_RESULTS = Path(__file__).resolve().parent.parent / "data" / "evaluation_results.json"
+CURVE_RESULTS = Path(__file__).resolve().parent.parent / "data" / "learning_curve.json"
 
 
 @st.cache_resource
@@ -98,7 +99,8 @@ def show_attempt(attempt: RemediationAttempt) -> None:
     else:
         result = "verified healthy" if attempt.verified else "still failing"
     health = ", ".join(f"{endpoint} {status}" for endpoint, status in attempt.health.items())
-    st.text(f"{attempt.at:%H:%M:%S}  {attempt.action}  |  {decision}  |  {result}" + (f"  |  {health}" if health else ""))
+    st.text(f"{attempt.at:%H:%M:%S}  {attempt.action} (chosen by {attempt.chosen_by})  |  {decision}  |  {result}"
+            + (f"  |  {health}" if health else ""))
     st.caption(f"Why: {attempt.reason}" if attempt.reason else attempt.description)
     if attempt.error:
         st.warning(attempt.error)
@@ -129,6 +131,9 @@ def action_panel(service: IncidentService, incident_id: str) -> None:
             attempts.append(attempt)
             st.rerun()  # redraw from the new state, so the decided action's buttons disappear
 
+    if not resolved:
+        engineer_choice(service, incident, suggestion, attempts, decided)
+
     if attempts:
         st.subheader("Action log")
         for attempt in attempts:
@@ -143,6 +148,62 @@ def action_panel(service: IncidentService, incident_id: str) -> None:
                 suggestion = service.analyze_incident(incident, tried_actions=[a.action for a in attempts])
             st.session_state["incidents"][incident_id] = (incident, suggestion)
             st.rerun()
+
+    if any(a.executed for a in attempts):
+        postmortem_panel(service, incident, suggestion, attempts)
+
+
+def engineer_choice(service: IncidentService, incident: Incident, suggestion: Suggestion,
+                    attempts: list[RemediationAttempt], decided: set[str]) -> None:
+    """The engineer can run a different allow-listed action. Its outcome is recorded too, so the agent learns it."""
+    names = [a.name for a in service.list_actions() if a.name not in decided]
+    if not names:
+        return
+    with st.expander("Run a different action (engineer's choice)",
+                     expanded=not suggestion.proposed_action or suggestion.proposed_action in decided):
+        st.selectbox("Allow-listed action", names, key="engineer_action")
+        st.caption("Runs now, then verifies ShopFast. The result is recorded in memory like the agent's own actions.")
+        if st.button("Run chosen action", key="run_engineer_action"):
+            with st.spinner("Running action and verifying ShopFast..."):
+                attempt = service.remediate(incident, suggestion, approved=True, previous_attempts=list(attempts),
+                                            action=st.session_state["engineer_action"])
+            attempts.append(attempt)
+            st.rerun()
+
+
+def postmortem_panel(service: IncidentService, incident: Incident, suggestion: Suggestion,
+                     attempts: list[RemediationAttempt]) -> None:
+    postmortems: dict[str, Postmortem] = st.session_state.setdefault("postmortems", {})
+    if st.button("Write postmortem (Hindsight reflect)", key="write_postmortem"):
+        try:
+            with st.spinner("Hindsight is reflecting over this incident and all past ones..."):
+                postmortems[incident.incident_id] = service.write_postmortem(incident, suggestion, attempts)
+        except IncidentMemoryError as exc:
+            st.error(f"Postmortem unavailable: {exc}")
+    if incident.incident_id in postmortems:
+        show_postmortem(postmortems[incident.incident_id])
+
+
+def show_postmortem(postmortem: Postmortem) -> None:
+    st.subheader(f"Postmortem {postmortem.incident_id}")
+    for label, value in (("Summary", postmortem.summary), ("Impact", postmortem.impact),
+                         ("Root cause", postmortem.root_cause)):
+        st.markdown(f"**{label}**")
+        st.text(value)
+    for label, items in (("Timeline", postmortem.timeline), ("What went well", postmortem.what_went_well),
+                         ("What went wrong", postmortem.what_went_wrong), ("Action items", postmortem.action_items)):
+        if items:
+            st.markdown(f"**{label}**")
+            for item in items:
+                st.text(f"- {item}")
+    if postmortem.related_incidents:
+        st.text(f"Related past incidents from memory: {', '.join(postmortem.related_incidents)}")
+    if postmortem.saved_to_memory:
+        st.success("Postmortem saved to memory with the incident; future recalls of it include these lessons.")
+    else:
+        st.warning("Postmortem written, but it could not be saved to memory.")
+    st.download_button("Download postmortem", postmortem.to_text(), file_name=f"{postmortem.incident_id}-postmortem.txt",
+                       key="download_postmortem")
 
 
 def analyze(service: IncidentService, incident: Incident) -> None:
@@ -204,6 +265,71 @@ def show_evaluation(path: Path) -> None:
     st.text(f"Actions needed: {s['attempts_before']} before, {s['attempts_after']} after")
     st.text(f"Failed fixes avoided after learning: {s['failed_fixes_avoided_after']} of {s['failed_fixes_before']}")
     st.caption(f"{n} controlled ShopFast incidents, run {report.get('generated_at', '')}; approvals {s['approvals']}.")
+
+
+def curve_rows(rows: list[dict], key: str, percent: bool) -> list[float]:
+    return [round(100 * r[key] / r["incidents"]) if percent else r[key] for r in rows]
+
+
+def show_learning_curve(path: Path) -> None:
+    st.subheader("Learning curve: the same incidents, again and again")
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+        with_memory = report["with_memory"]
+    except (OSError, ValueError, KeyError):
+        st.info("No learning curve yet. Run: python -m scripts.learning_curve --bank-id shopfast-curve-1 --baseline")
+        return
+    baseline = report.get("memory_off") or []
+    rounds = [r["round"] for r in with_memory]
+    fixed = {"Round": rounds, "With Hindsight memory": curve_rows(with_memory, "agent_first_try", True)}
+    wrong = {"Round": rounds, "With Hindsight memory": curve_rows(with_memory, "wrong_actions", False)}
+    if len(baseline) == len(with_memory):
+        fixed["Memory off"] = curve_rows(baseline, "agent_first_try", True)
+        wrong["Memory off"] = curve_rows(baseline, "wrong_actions", False)
+    left, right = st.columns(2)
+    left.markdown("**Fixed by the agent's first action (%)**")
+    left.line_chart(fixed, x="Round", y=[k for k in fixed if k != "Round"])
+    right.markdown("**Wrong actions run on production**")
+    right.line_chart(wrong, x="Round", y=[k for k in wrong if k != "Round"])
+    for row in with_memory:
+        n = row["incidents"]
+        st.text(f"Round {row['round']}: memory recalled {row['relevant_recall']}/{n}, first action fixed "
+                f"{row['agent_first_try']}/{n}, wrong actions {row['wrong_actions']}, "
+                f"engineer had to step in {row['engineer_actions']} time(s)")
+    st.caption(f"Each round replays every ShopFast fault once on one fresh bank ({report.get('bank_id', '')}), "
+               f"run {report.get('generated_at', '')}; approvals {report.get('approvals', '')}.")
+
+
+def show_runbook(service: IncidentService) -> None:
+    st.subheader("Living runbook (Hindsight mental model)")
+    st.caption("Hindsight rewrites this after it consolidates new memories: what worked and failed, per failure.")
+    if st.button("Load living runbook", key="load_runbook"):
+        try:
+            st.session_state["runbook"] = service.runbook()
+        except IncidentMemoryError as exc:
+            st.error(f"Memory unavailable: {exc}")
+    if "runbook" in st.session_state:
+        runbook = st.session_state["runbook"]
+        if runbook is None:
+            st.info("No living runbook in this bank yet. Run: python -m scripts.seed_memory")
+        else:
+            st.code(runbook or "(empty: Hindsight has not consolidated memories yet)", language="markdown")
+
+
+def integrate_tab() -> None:
+    st.caption("Use the agent and its memory from other tools. Both run locally and share the same Hindsight bank.")
+    st.subheader("MCP server (Claude Code, Cursor, any MCP client)")
+    st.code('{\n  "mcpServers": {\n    "incident-memory": {\n      "command": "uv",\n'
+            '      "args": ["run", "python", "-m", "mcp_server.server"]\n    }\n  }\n}', language="json")
+    st.text("Tools: detect_incident, analyze_incident, run_action, next_suggestion, record_outcome, write_postmortem,\n"
+            "get_runbook, search_memory. run_action and the other writing tools are marked destructive, so the\n"
+            "client asks you before each call.")
+    st.subheader("REST API")
+    st.code("uvicorn api.app:app --host 127.0.0.1 --port 8002", language="bash")
+    st.code('curl -X POST http://127.0.0.1:8002/incidents/detect -H "X-API-Key: $AGENT_API_KEY"', language="bash")
+    st.text("Endpoints: POST /incidents/detect, POST /incidents/analyze, GET /incidents/{id},\n"
+            "POST /incidents/{id}/reanalyze, POST /incidents/{id}/actions, POST /incidents/{id}/outcome,\n"
+            "POST /incidents/{id}/postmortem, GET /runbook, GET /memory/search?q=...  (docs at /docs)")
 
 
 def submit_tab(service: IncidentService) -> None:
@@ -286,8 +412,10 @@ def outcome_tab(service: IncidentService) -> None:
         st.success(f"Outcome for {incident.incident_id} saved to memory. The next similar incident will use it.")
 
 
-def learned_tab() -> None:
+def learned_tab(service: IncidentService) -> None:
+    show_learning_curve(Path(st.session_state.get("curve_results_path", CURVE_RESULTS)))
     show_evaluation(Path(st.session_state.get("eval_results_path", EVAL_RESULTS)))
+    show_runbook(service)
     last_id = st.session_state.get("last_id")
     if not last_id:
         st.info("Analyze an incident to see what the agent has learned about it.")
@@ -306,10 +434,13 @@ st.title("Incident Response Agent")
 st.caption("Recalls past ShopFast incidents from Hindsight memory and suggests fixes.")
 
 incident_service = get_service()
-submit, outcome, learned = st.tabs(["Submit incident", "Record outcome", "What the agent has learned"])
+submit, outcome, learned, integrate = st.tabs(["Submit incident", "Record outcome", "What the agent has learned",
+                                               "Integrate"])
 with submit:
     submit_tab(incident_service)
 with outcome:
     outcome_tab(incident_service)
 with learned:
-    learned_tab()
+    learned_tab(incident_service)
+with integrate:
+    integrate_tab()

@@ -1,0 +1,325 @@
+{
+  "generated_at": "2026-09-28T18:41:43Z",
+  "bank_id": "shopfast-curve-1",
+  "approvals": "given by the evaluation harness",
+  "with_memory": [
+    {
+      "round": 1,
+      "incidents": 4,
+      "relevant_recall": 0,
+      "resolved": 4,
+      "agent_fixed": 4,
+      "agent_first_try": 2,
+      "actions": 8,
+      "wrong_actions": 4,
+      "engineer_actions": 2,
+      "llm_errors": 0,
+      "details": [
+        {
+          "fault": "DB_POOL_EXHAUST",
+          "actions_tried": [
+            "rollback_payment_api"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "REDIS_TIMEOUT",
+          "actions_tried": [
+            "raise_redis_client_timeout",
+            "failover_cart_redis",
+            "rollback_payment_api",
+            "disable_cart_analytics"
+          ],
+          "engineer_actions": [
+            "rollback_payment_api"
+          ],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "AUTH_TOKEN_EXPIRED",
+          "actions_tried": [
+            "resync_gateway_clocks"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "PAYMENT_GATEWAY_TIMEOUT",
+          "actions_tried": [
+            "rollback_payment_api",
+            "raise_payment_gateway_timeout"
+          ],
+          "engineer_actions": [
+            "rollback_payment_api"
+          ],
+          "resolved": true,
+          "memory_used": false
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "incidents": 4,
+      "relevant_recall": 4,
+      "resolved": 4,
+      "agent_fixed": 4,
+      "agent_first_try": 4,
+      "actions": 4,
+      "wrong_actions": 0,
+      "engineer_actions": 0,
+      "llm_errors": 0,
+      "details": [
+        {
+          "fault": "DB_POOL_EXHAUST",
+          "actions_tried": [
+            "rollback_payment_api"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": true
+        },
+        {
+          "fault": "REDIS_TIMEOUT",
+          "actions_tried": [
+            "disable_cart_analytics"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": true
+        },
+        {
+          "fault": "AUTH_TOKEN_EXPIRED",
+          "actions_tried": [
+            "resync_gateway_clocks"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": true
+        },
+        {
+          "fault": "PAYMENT_GATEWAY_TIMEOUT",
+          "actions_tried": [
+            "raise_payment_gateway_timeout"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": true
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "incidents": 4,
+      "relevant_recall": 4,
+      "resolved": 4,
+      "agent_fixed": 4,
+      "agent_first_try": 4,
+      "actions": 4,
+      "wrong_actions": 0,
+      "engineer_actions": 0,
+      "llm_errors": 0,
+      "details": [
+        {
+          "fault": "DB_POOL_EXHAUST",
+          "actions_tried": [
+            "rollback_payment_api"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": true
+        },
+        {
+          "fault": "REDIS_TIMEOUT",
+          "actions_tried": [
+            "disable_cart_analytics"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": true
+        },
+        {
+          "fault": "AUTH_TOKEN_EXPIRED",
+          "actions_tried": [
+            "resync_gateway_clocks"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": true
+        },
+        {
+          "fault": "PAYMENT_GATEWAY_TIMEOUT",
+          "actions_tried": [
+            "raise_payment_gateway_timeout"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": true
+        }
+      ]
+    }
+  ],
+  "memory_off": [
+    {
+      "round": 1,
+      "incidents": 4,
+      "relevant_recall": 0,
+      "resolved": 4,
+      "agent_fixed": 4,
+      "agent_first_try": 2,
+      "actions": 7,
+      "wrong_actions": 3,
+      "engineer_actions": 0,
+      "llm_errors": 0,
+      "details": [
+        {
+          "fault": "DB_POOL_EXHAUST",
+          "actions_tried": [
+            "restart_payment_api_pods",
+            "rollback_payment_api"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "REDIS_TIMEOUT",
+          "actions_tried": [
+            "raise_redis_client_timeout",
+            "failover_cart_redis",
+            "disable_cart_analytics"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "AUTH_TOKEN_EXPIRED",
+          "actions_tried": [
+            "resync_gateway_clocks"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "PAYMENT_GATEWAY_TIMEOUT",
+          "actions_tried": [
+            "raise_payment_gateway_timeout"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "incidents": 4,
+      "relevant_recall": 0,
+      "resolved": 4,
+      "agent_fixed": 4,
+      "agent_first_try": 2,
+      "actions": 7,
+      "wrong_actions": 3,
+      "engineer_actions": 0,
+      "llm_errors": 0,
+      "details": [
+        {
+          "fault": "DB_POOL_EXHAUST",
+          "actions_tried": [
+            "restart_payment_api_pods",
+            "rollback_payment_api"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "REDIS_TIMEOUT",
+          "actions_tried": [
+            "raise_redis_client_timeout",
+            "failover_cart_redis",
+            "disable_cart_analytics"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "AUTH_TOKEN_EXPIRED",
+          "actions_tried": [
+            "resync_gateway_clocks"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "PAYMENT_GATEWAY_TIMEOUT",
+          "actions_tried": [
+            "raise_payment_gateway_timeout"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "incidents": 4,
+      "relevant_recall": 0,
+      "resolved": 4,
+      "agent_fixed": 4,
+      "agent_first_try": 3,
+      "actions": 6,
+      "wrong_actions": 2,
+      "engineer_actions": 0,
+      "llm_errors": 0,
+      "details": [
+        {
+          "fault": "DB_POOL_EXHAUST",
+          "actions_tried": [
+            "rollback_payment_api"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "REDIS_TIMEOUT",
+          "actions_tried": [
+            "raise_redis_client_timeout",
+            "failover_cart_redis",
+            "disable_cart_analytics"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "AUTH_TOKEN_EXPIRED",
+          "actions_tried": [
+            "resync_gateway_clocks"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        },
+        {
+          "fault": "PAYMENT_GATEWAY_TIMEOUT",
+          "actions_tried": [
+            "raise_payment_gateway_timeout"
+          ],
+          "engineer_actions": [],
+          "resolved": true,
+          "memory_used": false
+        }
+      ]
+    }
+  ]
+}

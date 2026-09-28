@@ -8,7 +8,8 @@ from streamlit.testing.v1 import AppTest
 
 from agent import config
 from agent.memory import IncidentMemoryError
-from agent.models import LearnedPattern, RemediationAttempt, SimilarIncident, Suggestion
+from agent.models import (LearnedPattern, Postmortem, RemediationAction, RemediationAttempt, SimilarIncident,
+                          Suggestion)
 from shopfast.faults import FAULT_LOGS, Fault
 
 APP = str(Path(__file__).resolve().parent.parent / "ui" / "app.py")
@@ -29,8 +30,9 @@ def _suggestion(**overrides) -> Suggestion:
 
 class FakeService:
     def __init__(self, suggestion=None, error=None, next_suggestion=None, verified=True, detected=None,
-                 detect_error=None):
+                 detect_error=None, postmortem_error=None, runbook="| failure | fix |"):
         self.analyzed, self.recorded, self.tried, self.remediated = [], [], [], []
+        self._postmortem_error, self._runbook = postmortem_error, runbook
         self._detected, self._detect_error = detected, detect_error
         self._suggestion = suggestion or _suggestion()
         self._next = next_suggestion
@@ -49,16 +51,32 @@ class FakeService:
             raise self._detect_error
         return self._detected
 
-    def remediate(self, incident, suggestion, approved, previous_attempts=()):
-        self.remediated.append((incident, suggestion.proposed_action, approved, list(previous_attempts)))
+    def remediate(self, incident, suggestion, approved, previous_attempts=(), action=None):
+        name = action or suggestion.proposed_action
+        self.remediated.append((incident, name, approved, list(previous_attempts)))
         verified = approved and self._verified
         return RemediationAttempt(
-            action=suggestion.proposed_action, description=f"desc of {suggestion.proposed_action}",
+            action=name, description=f"desc of {name}", chosen_by="engineer" if action else "agent",
             reason=suggestion.action_reason, approved=approved, executed=approved, verified=verified,
             health={"POST /checkout": 200 if verified else 503} if approved else {})
 
     def record_outcome(self, incident, outcome):
         self.recorded.append((incident, outcome))
+
+    def list_actions(self):
+        return [RemediationAction(name=n, description=f"desc of {n}")
+                for n in ("rollback_payment_api", "restart_payment_api_pods", "disable_cart_analytics")]
+
+    def write_postmortem(self, incident, suggestion, attempts):
+        self.postmortem_attempts = list(attempts)
+        if self._postmortem_error:
+            raise self._postmortem_error
+        return Postmortem(incident_id=incident.incident_id, summary="Checkout down 12 min", impact="All orders",
+                          root_cause="Pool halved", action_items=["Alert on pool usage"],
+                          related_incidents=["INC-1042"], saved_to_memory=True)
+
+    def runbook(self):
+        return self._runbook
 
 
 def _app(service: FakeService) -> AppTest:
@@ -88,7 +106,8 @@ def _all_text(at: AppTest) -> str:
 def test_app_starts_without_errors():
     at = _app(FakeService())
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["Submit incident", "Record outcome", "What the agent has learned"]
+    assert [t.label for t in at.tabs] == ["Submit incident", "Record outcome", "What the agent has learned",
+                                          "Integrate"]
 
 
 def test_submit_sends_incident_and_shows_suggestion():
@@ -369,3 +388,91 @@ def test_learned_tab_explains_how_to_run_evaluation_when_missing(tmp_path):
     at.session_state["eval_results_path"] = str(tmp_path / "missing.json")
     at.run()
     assert "scripts.evaluate_learning" in _all_text(at)
+
+
+# engineer choice, postmortem, learning curve, runbook, integrate
+
+def test_engineer_can_run_a_different_action_and_it_is_logged():
+    service = FakeService(_with_action("restart_payment_api_pods"))
+    at = _submit(_app(service))
+    at.selectbox(key="engineer_action").select("disable_cart_analytics")
+    at = at.button(key="run_engineer_action").click().run()
+    assert not at.exception
+    [(_, action, approved, _)] = service.remediated
+    assert (action, approved) == ("disable_cart_analytics", True)
+    assert "disable_cart_analytics (chosen by engineer)" in _all_text(at)
+
+
+def test_engineer_choice_is_open_when_agent_proposes_nothing():
+    at = _submit(_app(FakeService()))
+    assert any(e.label.startswith("Run a different action") for e in at.expander)
+    assert at.button(key="run_engineer_action")
+
+
+def test_postmortem_after_an_executed_action_is_shown_and_downloadable():
+    service = FakeService(_with_action())
+    at = _submit(_app(service))
+    assert not [b for b in at.button if b.key == "write_postmortem"]  # nothing ran yet
+    at = at.button(key="approve_action").click().run()
+    at = at.button(key="write_postmortem").click().run()
+    assert not at.exception
+    text = _all_text(at)
+    assert "Checkout down 12 min" in text and "Alert on pool usage" in text and "INC-1042" in text
+    assert any("saved to memory" in s.value.lower() for s in at.success)
+    assert [a.action for a in service.postmortem_attempts] == ["rollback_payment_api"]
+
+
+def test_postmortem_failure_is_shown():
+    service = FakeService(_with_action(), postmortem_error=IncidentMemoryError("reflect down"))
+    at = _submit(_app(service))
+    at = at.button(key="approve_action").click().run()
+    at = at.button(key="write_postmortem").click().run()
+    assert any("reflect down" in e.value for e in at.error)
+
+
+def _curve_file(tmp_path, baseline=True):
+    def row(n, recall, first, wrong, engineer):
+        return {"round": n, "incidents": 4, "relevant_recall": recall, "resolved": 4, "agent_fixed": first,
+                "agent_first_try": first, "actions": 4 + wrong, "wrong_actions": wrong,
+                "engineer_actions": engineer, "llm_errors": 0}
+    report = {"generated_at": "2026-09-28T12:00:00Z", "bank_id": "shopfast-curve-1",
+              "approvals": "given by the evaluation harness",
+              "with_memory": [row(1, 0, 2, 2, 4), row(2, 4, 4, 0, 0), row(3, 4, 4, 0, 0)],
+              "memory_off": [row(n, 0, 2, 2, 4) for n in (1, 2, 3)] if baseline else None}
+    path = tmp_path / "learning_curve.json"
+    path.write_text(json.dumps(report))
+    return path
+
+
+@pytest.mark.parametrize("baseline", [True, False])
+def test_learned_tab_shows_learning_curve(tmp_path, baseline):
+    at = AppTest.from_file(APP, default_timeout=10)
+    at.session_state["service"] = FakeService()
+    at.session_state["curve_results_path"] = str(_curve_file(tmp_path, baseline))
+    at.run()
+    assert not at.exception
+    text = _all_text(at)
+    assert "Round 1: memory recalled 0/4, first action fixed 2/4, wrong actions 2" in text
+    assert "Round 3: memory recalled 4/4, first action fixed 4/4, wrong actions 0" in text
+
+
+def test_learned_tab_explains_how_to_run_learning_curve_when_missing(tmp_path):
+    at = AppTest.from_file(APP, default_timeout=10)
+    at.session_state["service"] = FakeService()
+    at.session_state["curve_results_path"] = str(tmp_path / "missing.json")
+    at.run()
+    assert "scripts.learning_curve" in _all_text(at)
+
+
+@pytest.mark.parametrize("runbook, expected", [("| failure | fix |", "| failure | fix |"),
+                                               (None, "No living runbook in this bank yet")])
+def test_living_runbook_loads_on_request(runbook, expected):
+    at = _app(FakeService(runbook=runbook))
+    assert expected not in _all_text(at)  # not fetched on every rerun
+    at = at.button(key="load_runbook").click().run()
+    assert expected in _all_text(at)
+
+
+def test_integrate_tab_shows_mcp_and_api_usage():
+    text = _all_text(_app(FakeService()))
+    assert "mcp_server.server" in text and "/incidents/detect" in text and "X-API-Key" in text

@@ -100,6 +100,31 @@ def test_evaluate_runs_all_befores_then_all_afters_and_summarizes(setup, tmp_pat
     assert json.loads(out.read_text())["summary"] == s
 
 
+class SilentAdvisor(ScriptedAdvisor):
+    """Proposes nothing until memory shows a verified fix, like the LLM did for REDIS_TIMEOUT."""
+
+    def suggest(self, incident, similar, patterns, actions=(), tried_actions=()):
+        suggestion = super().suggest(incident, similar, patterns, actions, tried_actions)
+        if not suggestion.memory_used:
+            return suggestion.model_copy(update={"proposed_action": None, "action_reason": ""})
+        return suggestion
+
+
+def test_engineer_fallback_runs_when_agent_proposes_nothing_and_agent_learns_from_it(monkeypatch):
+    monkeypatch.setattr(shop, "faults", shop.FaultRegistry())
+    monkeypatch.setattr(shop, "alerts", shop.AlertLog())
+    http = TestClient(shop.app)
+    service = IncidentService(StoreMemory(), SilentAdvisor(), shop=ShopFastClient(http))
+    before = ev.run_round(service, http, Fault.REDIS_TIMEOUT)
+    runbook = list(ACTIONS)
+    fixer_at = runbook.index(FIXER[Fault.REDIS_TIMEOUT])
+    assert before.resolved and not before.agent_fixed
+    assert before.engineer_actions == runbook[:fixer_at + 1] == before.actions_tried
+    after = ev.run_round(service, http, Fault.REDIS_TIMEOUT)
+    assert after.agent_fixed and after.actions_tried == [FIXER[Fault.REDIS_TIMEOUT]]
+    assert after.engineer_actions == []
+
+
 def test_refuses_to_run_against_the_main_bank():
     with pytest.raises(SystemExit):
         ev.main(["--bank-id", "shopfast-incidents"])

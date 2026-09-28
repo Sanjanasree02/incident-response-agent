@@ -7,3 +7,4 @@ pydantic>=2
 python-dotenv
 pytest
 truststore
+mcp>=2.2

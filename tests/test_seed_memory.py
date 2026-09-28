@@ -19,6 +19,9 @@ class FakeMemory:
         if self._bank_error:
             raise self._bank_error
 
+    def ensure_runbook(self):
+        self.calls.append("ensure_runbook")
+
     def close(self):
         self.closed = True
 
@@ -38,14 +41,14 @@ def test_seed_creates_bank_first_then_retains_every_incident_in_order():
     incidents = load_seed_incidents()
     memory = FakeMemory()
     assert seed(memory, incidents) == []
-    assert memory.calls == ["ensure_bank", *(i.incident_id for i in incidents)]
+    assert memory.calls == ["ensure_bank", *(i.incident_id for i in incidents), "ensure_runbook"]
 
 
 def test_seed_continues_after_a_failure_and_reports_failed_ids():
     incidents = load_seed_incidents()
     memory = FakeMemory(fail_ids={"INC-1042", "INC-1156"})
     assert seed(memory, incidents) == ["INC-1042", "INC-1156"]
-    assert len(memory.calls) == 1 + len(incidents)
+    assert len(memory.calls) == 2 + len(incidents)
 
 
 def test_seed_stops_when_bank_cannot_be_created():

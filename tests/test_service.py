@@ -186,7 +186,7 @@ def test_failed_verification_is_recorded_as_failed_attempt():
     assert outcome.resolved is False
     assert outcome.steps_that_worked == []
     assert outcome.failed_attempts == ["restart_payment_api_pods: Restart all payment-api pods "
-                                       "(checkout still failing: POST /checkout 503)"]
+                                       "(still failing: POST /checkout 503)"]
 
 
 def test_outcome_accumulates_earlier_attempts_and_skips_rejected_ones():
@@ -202,7 +202,7 @@ def test_outcome_accumulates_earlier_attempts_and_skips_rejected_ones():
     outcome = memory.calls[0][2]
     assert outcome.resolved is True
     assert outcome.failed_attempts == ["restart_payment_api_pods: Restart all payment-api pods "
-                                       "(checkout still failing: POST /checkout 503)"]
+                                       "(still failing: POST /checkout 503)"]
     assert outcome.steps_that_worked == ["rollback_payment_api: Roll payment-api back to its previous release"]
 
 
@@ -282,3 +282,101 @@ def test_llm_failure_still_shows_evidence_from_recalled_memory():
 def test_no_evidence_without_shopfast_allow_list():
     suggestion = IncidentService(FakeMemory(similar=[RECORDED]), FakeAdvisor()).analyze_incident(INCIDENT)
     assert suggestion.action_evidence == []
+
+
+def test_engineer_can_run_an_action_the_agent_did_not_propose():
+    shop, memory = FakeShop(health=HEALTHY), FakeMemory()
+    attempt = _service(shop, memory).remediate(INCIDENT, _proposal(action=None), approved=True,
+                                               action="rollback_payment_api")
+    assert shop.ran == ["rollback_payment_api"]
+    assert attempt.chosen_by == "engineer" and "engineer" in attempt.reason
+    outcome = memory.calls[0][2]
+    assert outcome.steps_that_worked == ["rollback_payment_api: Roll payment-api back to its previous release"]
+
+
+def test_choosing_the_proposed_action_counts_as_the_agents_choice():
+    attempt = _service().remediate(INCIDENT, _proposal(), approved=True, action="rollback_payment_api")
+    assert attempt.chosen_by == "agent" and attempt.reason == "Rollback fixed INC-1042"
+
+
+def test_engineer_choice_outside_allow_list_is_refused():
+    shop = FakeShop()
+    with pytest.raises(ValueError):
+        _service(shop).remediate(INCIDENT, _proposal(), approved=True, action="drop_database")
+    assert shop.ran == []
+
+
+# postmortem, runbook, search
+
+from agent.models import Postmortem  # noqa: E402
+from agent.service import postmortem_context  # noqa: E402
+
+PM = Postmortem(incident_id="INC-2001", summary="s", impact="i", root_cause="r")
+
+
+class PostmortemMemory(FakeMemory):
+    def __init__(self, retain_error=None, **kwargs):
+        super().__init__(**kwargs)
+        self._retain_error = retain_error
+
+    def reflect_postmortem(self, incident, context):
+        self.calls.append(("reflect_postmortem", incident, context))
+        return PM
+
+    def retain_postmortem(self, incident, postmortem):
+        self.calls.append(("retain_postmortem", incident, postmortem))
+        if self._retain_error:
+            raise self._retain_error
+
+    def get_runbook(self):
+        return "runbook table"
+
+    def search(self, query, limit):
+        return [f"{query}:{limit}"]
+
+
+def _attempts():
+    return [
+        RemediationAttempt(action="restart_payment_api_pods", description="Restart", reason="r", approved=True,
+                           executed=True, verified=False, health=BROKEN),
+        RemediationAttempt(action="scale_out_payment_api", description="Add pods", approved=False, executed=False,
+                           verified=False),
+        RemediationAttempt(action="rollback_payment_api", description="Roll back", chosen_by="engineer",
+                           approved=True, executed=True, verified=True, health=HEALTHY),
+    ]
+
+
+def test_postmortem_context_lists_diagnosis_memory_and_every_decision():
+    suggestion = Suggestion(similar_incidents=SIMILAR, probable_root_cause="Pool exhausted", confidence="high",
+                            memory_used=True)
+    text = postmortem_context(INCIDENT, suggestion, _attempts())
+    assert "Incident INC-2001 (SEV1)" in text and "Pool exhausted" in text and "INC-1042" in text
+    assert "restart_payment_api_pods (Restart), chosen by agent: still failing: POST /checkout 503" in text
+    assert "scale_out_payment_api (Add pods), chosen by agent: rejected, not run" in text
+    assert "rollback_payment_api (Roll back), chosen by engineer: shop healthy afterwards" in text
+
+
+def test_postmortem_context_without_actions_says_so():
+    suggestion = Suggestion(probable_root_cause="?", confidence="low", memory_used=False)
+    assert "no action was taken" in postmortem_context(INCIDENT, suggestion, [])
+
+
+def test_write_postmortem_reflects_then_appends_to_memory():
+    memory = PostmortemMemory()
+    suggestion = Suggestion(probable_root_cause="Pool", confidence="high", memory_used=True)
+    postmortem = IncidentService(memory, FakeAdvisor()).write_postmortem(INCIDENT, suggestion, _attempts())
+    assert [c[0] for c in memory.calls] == ["reflect_postmortem", "retain_postmortem"]
+    assert postmortem.saved_to_memory is True
+
+
+def test_write_postmortem_still_returned_when_storing_fails():
+    memory = PostmortemMemory(retain_error=IncidentMemoryError("down"))
+    suggestion = Suggestion(probable_root_cause="Pool", confidence="high", memory_used=True)
+    postmortem = IncidentService(memory, FakeAdvisor()).write_postmortem(INCIDENT, suggestion, [])
+    assert postmortem.saved_to_memory is False and postmortem.summary == "s"
+
+
+def test_runbook_and_search_pass_through_memory():
+    service = IncidentService(PostmortemMemory(), FakeAdvisor())
+    assert service.runbook() == "runbook table"
+    assert service.search_memory("pool", 3) == ["pool:3"]

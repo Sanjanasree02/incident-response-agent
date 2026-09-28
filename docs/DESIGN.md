@@ -72,7 +72,11 @@ Scenario summary:
 | `agent/evidence.py` | Worked/failed counts per action from recorded outcomes | Done, tested |
 | `scripts/evaluate_learning.py` | Before-vs-after learning evaluation | Done, tested, run |
 | `shopfast/remediations.py` | Simulated runbook actions, including decoys | Done, tested |
-| `ui/app.py` | Streamlit UI, 3 tabs, example fault logs, text-only rendering of incident and LLM text | Done, tested with AppTest |
+| `ui/app.py` | Streamlit UI, 4 tabs, example fault logs, text-only rendering of incident and LLM text, engineer's choice, postmortem, learning curve, living runbook, Integrate tab | Done, tested with AppTest |
+| `agent/desk.py` | Open incidents by ID (incident, suggestion, action log) for the API and MCP server | Done, tested |
+| `api/app.py` | REST API, `X-API-Key` | Done, tested |
+| `mcp_server/server.py` | MCP server (stdio), 8 tools | Done, tested; smoke-tested over stdio against Hindsight Cloud |
+| `scripts/learning_curve.py` | Multi-round learning curve, memory on vs off | Done, tested, run |
 | `scripts/seed_memory.py` | Validate seed data, `--bank-id`, load into Hindsight | Done, tested |
 | `data/seed_incidents.json` | 25 synthetic incidents | Done |
 
@@ -98,6 +102,24 @@ Safety: actions are simulated in ShopFast (`shopfast/remediations.py`), some are
 - Evidence also grounds proposals: the LLM sees the same verified outcomes, and a proposal is rejected and retried if, for incidents it judged relevant, it repeats an action that only failed or ignores an action that worked.
 - Latest run (bank `shopfast-incidents-eval2`, 4 faults, final code): relevant recall 0/4 before, 3/4 after; resolved 2/4 before, 3/4 after; first-action fixes 2/4 before, 3/4 after; failed fixes avoided 1 of 1. `REDIS_TIMEOUT` got no proposal in either round (the LLM judged no listed action to fit), so nothing was learned for it. A first run on the pre-guard code gave relevant recall 0/4 -> 3/4, resolved 3/4 -> 4/4, first-action fixes 2/4 -> 4/4. Results vary run to run: 4 incidents, one run each.
 
+## Engineer's choice (learning from people)
+When the agent proposes nothing, or the engineer disagrees, the UI offers "Run a different action": any allow-listed action, run and verified like the agent's own, marked `chosen_by: engineer` in the action log, and recorded in memory the same way. The agent therefore learns fixes it did not think of. `REDIS_TIMEOUT` shows why this matters: with empty memory the LLM judged no action to fit, so earlier runs never learned anything for it. The evaluation harness now plays an engineer without memory in that case (tries the runbook in listed order; counted separately as `engineer_actions`), and the next round the agent proposes the verified fix itself. Two Redis decoys (`raise_redis_client_timeout`, `failover_cart_redis`, both failed fixes in the seed history) make the choice non-trivial.
+
+## Postmortem (Hindsight reflect)
+After any executed action, "Write postmortem" calls `IncidentService.write_postmortem`. `IncidentMemory.reflect_postmortem` sends the incident record and full action log (`postmortem_context`) as `context` to Hindsight `reflect` with a JSON schema (summary, impact, root cause, timeline, what went well and wrong, action items, related incidents). Hindsight reasons over the whole bank, so the postmortem says whether this failure happened before. Related incident IDs are filtered to real IDs. The postmortem is then appended to the incident's own document (`retain(..., document_id=incident_id, update_mode="append")`). `recall_similar` joins all chunks of a document into `source_text`, so later recalls of the incident carry the outcome and the postmortem. Postmortem text uses `*` bullets and no "Fix steps" headings, so it never adds action evidence. Downloadable from the UI.
+
+## Living runbook (Hindsight mental model)
+`IncidentMemory.ensure_runbook` creates the mental model `shopfast-runbook` (source query: what worked and failed per failure type, with incident IDs, as a table) with `trigger={"refresh_after_consolidation": True}`. Hindsight rewrites it after each consolidation, so it grows as outcomes are recorded. Created by the seed script and the evaluation scripts; shown on request in the "What the agent has learned" tab (not on every Streamlit rerun), and via `GET /runbook` and the MCP tool `get_runbook`.
+
+## Learning curve
+`scripts/learning_curve.py` replays every fault once per round, for N rounds, on one fresh bank; each round has what the earlier ones recorded. `--baseline` repeats the rounds with `NoMemory` (recalls nothing, keeps nothing). Per round: relevant recall, fixed by the agent's first action, wrong actions run, engineer actions. Latest run (`shopfast-curve-1`, 3 rounds): first-action fixes 2/4, 4/4, 4/4 with memory vs 2/4, 2/4, 3/4 off; wrong actions 4, 0, 0 vs 3, 3, 2. Saved to `data/learning_curve.json`; the UI charts "fixed by the agent's first action (%)" and "wrong actions run on production", with memory and with memory off.
+
+## Integrations (REST API and MCP)
+Both sit on `agent/desk.py`, which keeps open incidents by ID (bounded, 200) so later calls can act, record or write a postmortem by ID.
+- REST (`api/app.py`, port 8002, `127.0.0.1`): `POST /incidents/detect`, `POST /incidents/analyze`, `GET /incidents/{id}`, `POST /incidents/{id}/reanalyze`, `POST /incidents/{id}/actions`, `POST /incidents/{id}/outcome`, `POST /incidents/{id}/postmortem`, `GET /runbook`, `GET /memory/search`. `X-API-Key` must equal `AGENT_API_KEY` (constant-time compare); without the variable every call gets 503. Calling `/actions` is the approval. Errors: unknown incident 404, invalid input 422, action not allow-listed 409, Hindsight or ShopFast failure 502.
+- MCP (`mcp_server/server.py`, stdio, `mcp` 2.x `MCPServer`): tools `detect_incident`, `analyze_incident`, `run_action`, `next_suggestion`, `record_outcome`, `write_postmortem`, `get_runbook`, `search_memory`. Writing tools carry `destructive_hint=True`, so clients confirm with the user first. Errors are returned as `{"error": ...}`, never raised. `.mcp.json` registers it for Claude Code.
+- Not built from the proposal: per-client banks and hashed per-client keys (one shared key and bank at demo scale), Python package, iframe.
+
 ## Configuration
 `.env` (git-ignored) holds:
 
@@ -108,6 +130,7 @@ Safety: actions are simulated in ShopFast (`shopfast/remediations.py`), some are
 | `HINDSIGHT_BANK_ID` | `shopfast-incidents` (or a demo bank) |
 | `GROQ_API_KEY` | from console.groq.com |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` |
+| `AGENT_API_KEY` | REST API key, long random value |
 
 ## Hindsight memory usage
 - One shared bank: `shopfast-incidents` (overridable per demo run, see below).
@@ -140,7 +163,7 @@ Then set `HINDSIGHT_BANK_ID=shopfast-incidents-demo3` in `.env`. Old banks stay 
 | Other realistic incidents | 16 | noise; shows ranking |
 
 ## Trade-offs
-- `recall` + Groq instead of Hindsight `reflect`: gives structured JSON output and explicit citations. `reflect` is a possible stretch goal.
+- `recall` + Groq for the live suggestion: structured JSON output, explicit citations and validation against the allow-list. `reflect` is used where Hindsight's own reasoning over the whole bank is the point: the postmortem and the living runbook.
 - Sync SDK: Streamlit is synchronous; simpler code at demo scale.
 - Fault switches held in memory: simple; state resets on restart.
 
@@ -168,7 +191,7 @@ Then set `HINDSIGHT_BANK_ID=shopfast-incidents-demo3` in `.env`. Old banks stay 
 | ShopFast owner | `shopfast/app.py` endpoints and fault behavior |
 | UI + demo owner | `ui/app.py` (incl. "What the agent has learned" panel), demo script, video, content deliverables |
 
-## Proposed: embedding the agent in other projects (pending decision)
+## Embedding the agent in other projects (original proposal; REST API and MCP server are built, see Integrations)
 | Option | Who can use it | Effort |
 |---|---|---|
 | REST API (FastAPI): `POST /incidents/analyze`, `POST /incidents/{id}/outcome`, `GET /patterns` | Any project, any language | about 1-1.5 h |
@@ -200,10 +223,12 @@ Security for embedding: API key per client (stored hashed), one memory bank per 
 | 2026-09-28 | `fbd313a` | Demo verification results; AC1-AC5 verified |
 | 2026-09-28 | `bae7c4e` | Act -> verify -> learn: allow-listed runbook actions, human approval, verification, automatic outcome recording |
 | 2026-09-28 | `6a3501e` | Automatic incident intake: ShopFast alerts, Detect button, manual form kept as fallback |
-| 2026-09-28 | (this change) | Measurable learning: evidence from recorded outcomes, before-vs-after evaluation |
+| 2026-09-28 | `41b9563` | Measurable learning: evidence from recorded outcomes, before-vs-after evaluation |
+| 2026-09-28 | `58cec3f` | Customer-facing ShopFast storefront |
+| 2026-09-29 | (this change) | Engineer's choice and Redis decoys; postmortem with `reflect`; living runbook mental model; learning curve with memory-off baseline; REST API; MCP server; uv setup |
 
 ## Open items
-- Decision: embedding options and the Integrate tab.
+- Per-client banks and keys for the REST API if it is ever exposed beyond localhost.
 - Build order: (done) `agent/memory.py` and seed script, (done) `llm.py` and `service.py`, (done) UI, (done) ShopFast endpoints. All modules built.
 
 ## Known limits
@@ -213,7 +238,5 @@ Security for embedding: API key per client (stored hashed), one memory bank per 
 - UI state lives in the browser session; a page refresh loses analyzed incidents (see future work).
 
 ## Future work
-- Agent learns whether its own suggestions worked (retain suggestion plus result).
-- ShopFast sends alerts to the agent automatically instead of copy-paste.
-- Persist open incidents (SQLite) so a page refresh does not lose them.
-- Eval script: recall hit rate before and after the feedback loop.
+- Persist open incidents (SQLite) so a page refresh or API restart does not lose them.
+- More fault types for a longer learning curve.
