@@ -21,6 +21,7 @@ class Settings:
     groq_api_key: str
     groq_model: str
     shopfast_url: str = "http://127.0.0.1:8001"
+    incident_db: str = ""  # SQLite file for open incidents; empty = data/incidents.db
 
 
 def _require(name: str) -> str:
@@ -50,4 +51,5 @@ def load_settings(bank_id_override: str | None = None) -> Settings:
         groq_api_key=_require("GROQ_API_KEY"),
         groq_model=os.getenv("GROQ_MODEL", "").strip() or "openai/gpt-oss-120b",
         shopfast_url=f"http://{os.getenv('SHOPFAST_HOST', '127.0.0.1')}:{os.getenv('SHOPFAST_PORT', '8001')}",
+        incident_db=os.getenv("INCIDENT_DB", "").strip(),
     )

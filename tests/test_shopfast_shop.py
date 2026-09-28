@@ -84,6 +84,10 @@ def test_checkout_rejects_bad_input(client, body, status):
     (Fault.AUTH_TOKEN_EXPIRED, "post", "/login", {"username": "alice", "password": "secret"}, 401),
     (Fault.DB_POOL_EXHAUST, "post", "/checkout", ITEMS, 503),
     (Fault.PAYMENT_GATEWAY_TIMEOUT, "post", "/checkout", ITEMS, 504),
+    (Fault.INVENTORY_DEADLOCK, "post", "/checkout", ITEMS, 500),
+    (Fault.CERT_EXPIRED, "post", "/login", {"username": "alice", "password": "secret"}, 502),
+    (Fault.SEARCH_DISK_FULL, "get", "/products", None, 503),
+    (Fault.PROMO_CONFIG_BROKEN, "post", "/checkout", ITEMS, 500),
 ], ids=lambda v: v.value if isinstance(v, Fault) else None)
 def test_fault_fails_endpoint_with_its_log_line(client, caplog, fault, method, path, body, status):
     _enable(client, fault)
@@ -101,6 +105,10 @@ def test_fault_fails_endpoint_with_its_log_line(client, caplog, fault, method, p
     (Fault.AUTH_TOKEN_EXPIRED, ("get", "/products", None)),
     (Fault.DB_POOL_EXHAUST, ("post", "/login", {"username": "alice", "password": "secret"})),
     (Fault.PAYMENT_GATEWAY_TIMEOUT, ("post", "/cart/items", {"product_id": "sku-100", "quantity": 1})),
+    (Fault.INVENTORY_DEADLOCK, ("get", "/products", None)),
+    (Fault.CERT_EXPIRED, ("post", "/checkout", ITEMS)),
+    (Fault.SEARCH_DISK_FULL, ("post", "/cart/items", {"product_id": "sku-100", "quantity": 1})),
+    (Fault.PROMO_CONFIG_BROKEN, ("post", "/login", {"username": "alice", "password": "secret"})),
 ], ids=lambda v: v.value if isinstance(v, Fault) else None)
 def test_fault_does_not_break_other_endpoints(client, fault, unaffected):
     _enable(client, fault)

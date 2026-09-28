@@ -1,5 +1,6 @@
 # Secrets
 .env
+data/incidents.db
 
 # Python
 __pycache__/
@@ -13,3 +14,6 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Generated PDFs for sharing
+share/

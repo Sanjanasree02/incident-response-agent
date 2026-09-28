@@ -105,6 +105,14 @@ class LearnedPattern(BaseModel):
     text: str
 
 
+class TeamRule(BaseModel):
+    """A rule the team sets for the agent, stored in Hindsight as a directive (e.g. "prefer rollback after a deploy")."""
+
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,63}$")
+    content: str = Field(min_length=10, max_length=500)
+    priority: int = Field(default=10, ge=0, le=100)
+
+
 class RemediationAction(BaseModel):
     """An allow-listed runbook action the agent may propose. Names come from ShopFast's /ops/actions."""
 
@@ -167,6 +175,7 @@ class Suggestion(BaseModel):
     proposed_action: str | None = None  # allow-listed runbook action; runs only after human approval
     action_reason: str = ""
     action_evidence: list[ActionEvidence] = Field(default_factory=list)
+    team_rules: list[str] = Field(default_factory=list)  # names of the team rules the advisor was given
 
 
 TextItem = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_TEXT_CHARS)]

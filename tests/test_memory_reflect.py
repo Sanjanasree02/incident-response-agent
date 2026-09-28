@@ -124,3 +124,47 @@ def test_search_returns_distinct_fact_texts_up_to_limit():
 def test_new_hindsight_errors_are_wrapped(call):
     with pytest.raises(IncidentMemoryError):
         call(_memory(ReflectFake(error=ConnectionError("down"))))
+
+
+# team rules (directives)
+
+from agent.models import TeamRule  # noqa: E402
+
+
+class DirectiveFake(FakeHindsight):
+    def __init__(self, directives=(), **kwargs):
+        super().__init__(**kwargs)
+        self.directives = list(directives)
+
+    def list_directives(self, bank_id):
+        self._record("list_directives", bank_id=bank_id)
+        return SimpleNamespace(items=self.directives)
+
+    def create_directive(self, bank_id, **kwargs):
+        self.calls.append(("create_directive", dict(bank_id=bank_id, **kwargs)))
+        self.directives.append(SimpleNamespace(is_active=True, **kwargs))
+
+
+def _directive(name, priority, active=True):
+    return SimpleNamespace(name=name, content=f"Rule text for {name}", priority=priority, is_active=active)
+
+
+def test_team_rules_are_active_directives_highest_priority_first():
+    client = DirectiveFake([_directive("low-rule", 1), _directive("off-rule", 50, active=False),
+                            _directive("high-rule", 20)])
+    assert [r.name for r in _memory(client).team_rules()] == ["high-rule", "low-rule"]
+
+
+def test_ensure_team_rules_adds_only_missing_rules():
+    client = DirectiveFake([_directive("existing-rule", 5)])
+    rules = [TeamRule(name="existing-rule", content="Already stored rule text"),
+             TeamRule(name="new-rule", content="A rule that is not stored yet", priority=30)]
+    assert _memory(client).ensure_team_rules(rules) == ["new-rule"]
+    [(name, kwargs)] = [c for c in client.calls if c[0] == "create_directive"]
+    assert kwargs["name"] == "new-rule" and kwargs["priority"] == 30
+
+
+def test_postmortem_reflect_applies_all_directives():
+    client = ReflectFake()
+    _memory(client).reflect_postmortem(_incident(), "c")
+    assert client.calls[0][1]["apply_all_directives"] is True

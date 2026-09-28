@@ -7,7 +7,8 @@ from agent.evidence import action_evidence
 from agent.intake import incident_from_alert
 from agent.llm import IncidentAdvisor, LLMError
 from agent.memory import IncidentMemory, IncidentMemoryError
-from agent.models import Incident, Outcome, Postmortem, RemediationAction, RemediationAttempt, Suggestion
+from agent.models import (Incident, Outcome, Postmortem, RemediationAction, RemediationAttempt, Suggestion,
+                          TeamRule)
 
 LLM_UNAVAILABLE = "AI suggestion unavailable. Review the similar past incidents below."
 ENGINEER_CHOICE = "Chosen by the on-call engineer instead of the agent's proposal"
@@ -105,15 +106,16 @@ class IncidentService:
             patterns = self._memory.recall_learned_patterns(incident)
         except IncidentMemoryError:
             patterns = []
+        rules = self.team_rules_or_none()
         if self._shop is None:
             try:
-                return self._advisor.suggest(incident, similar, patterns)
+                return self._advisor.suggest(incident, similar, patterns, rules=rules)
             except LLMError as exc:
                 return self._memory_only(similar, patterns, exc)
         actions = self._actions()
         try:
             suggestion = self._advisor.suggest(incident, similar, patterns, actions=actions,
-                                               tried_actions=list(tried_actions))
+                                               tried_actions=list(tried_actions), rules=rules)
         except LLMError as exc:
             suggestion = self._memory_only(similar, patterns, exc)
         evidence = action_evidence(suggestion.similar_incidents, [a.name for a in actions])
@@ -181,6 +183,19 @@ class IncidentService:
         except IncidentMemoryError:
             return postmortem
         return postmortem.model_copy(update={"saved_to_memory": True})
+
+    def team_rules_or_none(self) -> list[TeamRule]:
+        """Team rules are optional for an analysis: without them the agent still advises from memory."""
+        try:
+            return self._memory.team_rules()
+        except IncidentMemoryError:
+            return []
+
+    def team_rules(self) -> list[TeamRule]:
+        return self._memory.team_rules()
+
+    def add_team_rule(self, rule: TeamRule) -> None:
+        self._memory.add_team_rule(rule)
 
     def runbook(self) -> str | None:
         """The living runbook Hindsight maintains (a mental model), or None when it does not exist yet."""

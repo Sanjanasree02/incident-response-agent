@@ -114,10 +114,28 @@ After any executed action, "Write postmortem" calls `IncidentService.write_postm
 ## Learning curve
 `scripts/learning_curve.py` replays every fault once per round, for N rounds, on one fresh bank; each round has what the earlier ones recorded. `--baseline` repeats the rounds with `NoMemory` (recalls nothing, keeps nothing). Per round: relevant recall, fixed by the agent's first action, wrong actions run, engineer actions. Latest run (`shopfast-curve-1`, 3 rounds): first-action fixes 2/4, 4/4, 4/4 with memory vs 2/4, 2/4, 3/4 off; wrong actions 4, 0, 0 vs 3, 3, 2. Saved to `data/learning_curve.json`; the UI charts "fixed by the agent's first action (%)" and "wrong actions run on production", with memory and with memory off.
 
+## Team rules (Hindsight directives)
+Rules the team sets once live in the bank as Hindsight directives. `data/team_rules.json` holds the starting four (prefer rollback after a change, no restart as first fix, cite or say none, blameless postmortems); the seed script adds the missing ones. The UI adds more (name, text, priority, validated). `IncidentService.analyze_incident` reads the active rules (highest priority first) and gives them to the advisor in a `<rules>` block; the system prompt says to follow them and to prefer a rule over a conflicting memory. Rule text is escaped like all other data. The suggestion names the rules it was given. Postmortems call `reflect` with `apply_all_directives=True`. Rules that cannot be read never block an analysis. Exposed as `GET/POST /rules` and the MCP tool `list_team_rules`.
+
+## Persistence (SQLite)
+`agent/store.py` keeps each open incident (incident, latest suggestion, action log, postmortem) as one row with JSON columns, validated by the models on read (`INCIDENT_DB`, default `data/incidents.db`, git-ignored). `IncidentDesk` (API and MCP) uses it instead of an in-process dict, so an incident can be continued after a restart; changes to one desk are serialized. The UI saves after every change and restores the 20 most recent incidents on a new browser session, with a selector to switch between them. Hindsight holds what the agent learned; SQLite holds only work in progress.
+
+## Fault catalogue
+| Fault | Endpoint | Seed history | Fixing action | Decoys it can be confused with |
+|---|---|---|---|---|
+| `DB_POOL_EXHAUST` | checkout 503 | INC-1042, INC-1067, INC-1113 | `rollback_payment_api` | `restart_payment_api_pods`, `scale_out_payment_api` |
+| `REDIS_TIMEOUT` | products, cart 503 | INC-1051, INC-1088, INC-1129 | `disable_cart_analytics` | `raise_redis_client_timeout`, `failover_cart_redis` |
+| `AUTH_TOKEN_EXPIRED` | login 401 | INC-1075, INC-1098, INC-1141 | `resync_gateway_clocks` | |
+| `PAYMENT_GATEWAY_TIMEOUT` | checkout 504 | none | `raise_payment_gateway_timeout` | `rollback_payment_api` |
+| `INVENTORY_DEADLOCK` | checkout 500 | INC-1092 | `enable_sorted_row_locking` | `restart_inventory_service` |
+| `CERT_EXPIRED` | login 502 | INC-1059 | `renew_auth_certificate` | `resync_gateway_clocks` |
+| `SEARCH_DISK_FULL` | products 503 | INC-1118 | `delete_old_log_indices` | `scale_out_search` |
+| `PROMO_CONFIG_BROKEN` | checkout 500 | none | `rollback_promotions_config` | `restart_promotions_service`, `rollback_payment_api` |
+
 ## Integrations (REST API and MCP)
 Both sit on `agent/desk.py`, which keeps open incidents by ID (bounded, 200) so later calls can act, record or write a postmortem by ID.
 - REST (`api/app.py`, port 8002, `127.0.0.1`): `POST /incidents/detect`, `POST /incidents/analyze`, `GET /incidents/{id}`, `POST /incidents/{id}/reanalyze`, `POST /incidents/{id}/actions`, `POST /incidents/{id}/outcome`, `POST /incidents/{id}/postmortem`, `GET /runbook`, `GET /memory/search`. `X-API-Key` must equal `AGENT_API_KEY` (constant-time compare); without the variable every call gets 503. Calling `/actions` is the approval. Errors: unknown incident 404, invalid input 422, action not allow-listed 409, Hindsight or ShopFast failure 502.
-- MCP (`mcp_server/server.py`, stdio, `mcp` 2.x `MCPServer`): tools `detect_incident`, `analyze_incident`, `run_action`, `next_suggestion`, `record_outcome`, `write_postmortem`, `get_runbook`, `search_memory`. Writing tools carry `destructive_hint=True`, so clients confirm with the user first. Errors are returned as `{"error": ...}`, never raised. `.mcp.json` registers it for Claude Code.
+- MCP (`mcp_server/server.py`, stdio, `mcp` 2.x `MCPServer`): tools `detect_incident`, `analyze_incident`, `run_action`, `next_suggestion`, `record_outcome`, `write_postmortem`, `get_runbook`, `list_team_rules`, `search_memory`. Writing tools carry `destructive_hint=True`, so clients confirm with the user first. Errors are returned as `{"error": ...}`, never raised. `.mcp.json` registers it for Claude Code.
 - Not built from the proposal: per-client banks and hashed per-client keys (one shared key and bank at demo scale), Python package, iframe.
 
 ## Configuration
@@ -225,7 +243,8 @@ Security for embedding: API key per client (stored hashed), one memory bank per 
 | 2026-09-28 | `6a3501e` | Automatic incident intake: ShopFast alerts, Detect button, manual form kept as fallback |
 | 2026-09-28 | `41b9563` | Measurable learning: evidence from recorded outcomes, before-vs-after evaluation |
 | 2026-09-28 | `58cec3f` | Customer-facing ShopFast storefront |
-| 2026-09-29 | (this change) | Engineer's choice and Redis decoys; postmortem with `reflect`; living runbook mental model; learning curve with memory-off baseline; REST API; MCP server; uv setup |
+| 2026-09-29 | PR #1 | Engineer's choice and Redis decoys; postmortem with `reflect`; living runbook mental model; learning curve with memory-off baseline; REST API; MCP server; uv setup |
+| 2026-09-29 | PR #2 | Four more faults (8 total); learning curve repeats, averages and parallel merge; incident ID collision fix; team rules as directives; SQLite persistence; overview and pending-work PDFs |
 
 ## Open items
 - Per-client banks and keys for the REST API if it is ever exposed beyond localhost.
@@ -235,8 +254,7 @@ Security for embedding: API key per client (stored hashed), one memory bank per 
 - Groq free tier allows 8000 tokens per minute (about 2 analyses per minute). The advisor waits as long as Groq asks, up to 20 s, then falls back to showing recalled memory.
 - Hindsight calls run one at a time on a single worker thread per `IncidentMemory`. Fine at demo scale.
 - Every recorded outcome is retained permanently. Use a demo bank (`--bank-id shopfast-incidents-demoN`) for rehearsals so the main bank is not filled with repeated demo incidents.
-- UI state lives in the browser session; a page refresh loses analyzed incidents (see future work).
+- Open incidents persist in SQLite; delete `data/incidents.db` to start the UI with none.
 
 ## Future work
-- Persist open incidents (SQLite) so a page refresh or API restart does not lose them.
-- More fault types for a longer learning curve.
+- See `docs/PENDING.md` for the remaining submission work and ideas.

@@ -9,7 +9,8 @@ from hindsight_client import Hindsight
 
 from agent.config import Settings
 from agent.log_normalizer import normalize_log
-from agent.models import HistoricalIncident, Incident, LearnedPattern, Outcome, Postmortem, SimilarIncident
+from agent.models import (HistoricalIncident, Incident, LearnedPattern, Outcome, Postmortem, SimilarIncident,
+                          TeamRule)
 
 BANK_MISSION = (
     "You are the incident memory for ShopFast, an e-commerce platform. "
@@ -215,6 +216,7 @@ class IncidentMemory:
                  "this failure has happened before and what was learned, and propose concrete action items.")
         response = self._call("reflect", lambda: self._client.reflect(
             self._bank_id, query, budget="mid", context=context, max_tokens=2000, response_schema=POSTMORTEM_SCHEMA,
+            apply_all_directives=True,  # team rules such as "postmortems are blameless" shape the postmortem too
         ))
         data = response.structured_output
         if not isinstance(data, dict):
@@ -239,6 +241,27 @@ class IncidentMemory:
             metadata={"service": incident.service, "severity": incident.severity.value, "kind": "postmortem"},
             update_mode="append",
         ))
+
+    def team_rules(self) -> list[TeamRule]:
+        """Active team rules (Hindsight directives), highest priority first."""
+        response = self._call("list_directives", lambda: self._client.list_directives(self._bank_id))
+        rules = [TeamRule(name=d.name, content=d.content, priority=d.priority or 0)
+                 for d in response.items if d.is_active]
+        return sorted(rules, key=lambda r: -r.priority)
+
+    def add_team_rule(self, rule: TeamRule) -> None:
+        self._call("create_directive", lambda: self._client.create_directive(
+            self._bank_id, name=rule.name, content=rule.content, priority=rule.priority))
+
+    def ensure_team_rules(self, rules: list[TeamRule]) -> list[str]:
+        """Create the rules whose names are not in the bank yet. Returns the names created."""
+        existing = {r.name for r in self.team_rules()}
+        created = []
+        for rule in rules:
+            if rule.name not in existing:
+                self.add_team_rule(rule)
+                created.append(rule.name)
+        return created
 
     def _has_runbook(self) -> bool:
         existing = self._call("list_mental_models", lambda: self._client.list_mental_models(self._bank_id))

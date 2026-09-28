@@ -37,4 +37,23 @@ ACTIONS: dict[str, Remediation] = {
         "Raise the payment gateway client timeout from 10 s to 30 s and retry charges with backoff",
         frozenset({Fault.PAYMENT_GATEWAY_TIMEOUT}),
     ),
+    "enable_sorted_row_locking": Remediation(
+        "Turn on the inventory-service flag that locks product rows in sorted ID order during reservations",
+        frozenset({Fault.INVENTORY_DEADLOCK}),
+    ),
+    "restart_inventory_service": Remediation("Restart all inventory-service pods"),
+    "renew_auth_certificate": Remediation(
+        "Force cert-manager to reissue the auth-service TLS certificate",
+        frozenset({Fault.CERT_EXPIRED}),
+    ),
+    "delete_old_log_indices": Remediation(
+        "Delete log indices older than 14 days from the search Elasticsearch cluster",
+        frozenset({Fault.SEARCH_DISK_FULL}),
+    ),
+    "scale_out_search": Remediation("Add one more search-service pod"),
+    "rollback_promotions_config": Remediation(
+        "Roll the promotions-service configuration back to its previous version",
+        frozenset({Fault.PROMO_CONFIG_BROKEN}),
+    ),
+    "restart_promotions_service": Remediation("Restart all promotions-service pods"),
 }

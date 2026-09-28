@@ -146,6 +146,15 @@ def get_runbook() -> dict:
 
 
 @server.tool(annotations=READ)
+def list_team_rules() -> dict:
+    """The team's rules for the agent (Hindsight directives), highest priority first."""
+    try:
+        return {"rules": [r.model_dump() for r in desk().team_rules()]}
+    except EXPECTED as exc:
+        return _error(exc)
+
+
+@server.tool(annotations=READ)
 def search_memory(query: str, limit: int = 10) -> dict:
     """Search incident memory with a free-text question, e.g. 'what fixed Redis timeouts on cart-service?'."""
     try:

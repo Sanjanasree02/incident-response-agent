@@ -6,9 +6,10 @@ from agent.desk import IncidentDesk
 from agent.llm import IncidentAdvisor
 from agent.memory import IncidentMemory
 from agent.service import IncidentService
+from agent.store import DEFAULT_DB, IncidentStore
 
 
 def build_desk(settings: Settings | None = None) -> IncidentDesk:
     settings = settings or load_settings()
     service = IncidentService(IncidentMemory(settings), IncidentAdvisor(settings), ShopFastClient.from_settings(settings))
-    return IncidentDesk(service)
+    return IncidentDesk(service, IncidentStore(settings.incident_db or DEFAULT_DB))

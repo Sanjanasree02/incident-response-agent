@@ -38,11 +38,14 @@ class StoreMemory:
     def retain_outcome(self, incident, outcome):
         self.stored[incident.incident_id] = format_outcome(incident, outcome)
 
+    def team_rules(self):
+        return []
+
 
 class ScriptedAdvisor:
     """Relevant = stored outcomes for the same log. No memory: decoy first, then the fixer."""
 
-    def suggest(self, incident, similar, patterns, actions=(), tried_actions=()):
+    def suggest(self, incident, similar, patterns, actions=(), tried_actions=(), rules=()):
         fault = next(f for f in Fault if SIGNATURE[f] in incident.error_log)
         relevant = [s for s in similar if SIGNATURE[fault] in s.source_text]
         proven = [s for s in relevant if f"- {FIXER[fault]}:" in s.source_text.split("did not work")[0]]
@@ -103,7 +106,7 @@ def test_evaluate_runs_all_befores_then_all_afters_and_summarizes(setup, tmp_pat
 class SilentAdvisor(ScriptedAdvisor):
     """Proposes nothing until memory shows a verified fix, like the LLM did for REDIS_TIMEOUT."""
 
-    def suggest(self, incident, similar, patterns, actions=(), tried_actions=()):
+    def suggest(self, incident, similar, patterns, actions=(), tried_actions=(), rules=()):
         suggestion = super().suggest(incident, similar, patterns, actions, tried_actions)
         if not suggestion.memory_used:
             return suggestion.model_copy(update={"proposed_action": None, "action_reason": ""})

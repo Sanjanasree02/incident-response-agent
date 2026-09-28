@@ -17,7 +17,8 @@ from pydantic import BaseModel, Field, ValidationError
 from agent.actions import ShopFastError
 from agent.desk import IncidentDesk, OpenIncident, UnknownIncident
 from agent.memory import IncidentMemoryError
-from agent.models import MAX_TEXT_CHARS, Incident, Postmortem, RemediationAttempt, Severity, Step, Suggestion
+from agent.models import (MAX_TEXT_CHARS, Incident, Postmortem, RemediationAttempt, Severity, Step, Suggestion,
+                          TeamRule)
 
 app = FastAPI(title="Incident Response Agent API", version="1.0")
 
@@ -137,6 +138,17 @@ def postmortem(incident_id: str, desk: Desk) -> Postmortem:
 @app.get("/runbook", dependencies=authorized)
 def runbook(desk: Desk) -> dict:
     return {"runbook": desk.runbook()}
+
+
+@app.get("/rules", dependencies=authorized)
+def list_rules(desk: Desk) -> list[TeamRule]:
+    return desk.team_rules()
+
+
+@app.post("/rules", status_code=201, dependencies=authorized)
+def add_rule(rule: TeamRule, desk: Desk) -> TeamRule:
+    desk.add_team_rule(rule)
+    return rule
 
 
 @app.get("/memory/search", dependencies=authorized)

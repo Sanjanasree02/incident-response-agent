@@ -15,9 +15,14 @@ from pathlib import Path
 
 from agent.config import load_settings
 from agent.memory import IncidentMemory, IncidentMemoryError
-from agent.models import HistoricalIncident
+from agent.models import HistoricalIncident, TeamRule
 
 SEED_FILE = Path(__file__).resolve().parent.parent / "data" / "seed_incidents.json"
+RULES_FILE = Path(__file__).resolve().parent.parent / "data" / "team_rules.json"
+
+
+def load_team_rules(path: Path = RULES_FILE) -> list[TeamRule]:
+    return [TeamRule.model_validate(item) for item in json.loads(path.read_text(encoding="utf-8"))]
 
 
 def load_seed_incidents(path: Path = SEED_FILE) -> list[HistoricalIncident]:
@@ -37,6 +42,11 @@ def seed(memory: IncidentMemory, incidents: list[HistoricalIncident]) -> list[st
         except IncidentMemoryError as exc:
             failed.append(incident.incident_id)
             print(f"  FAILED {incident.incident_id}: {exc}", file=sys.stderr)
+    try:
+        created = memory.ensure_team_rules(load_team_rules())
+        print(f"  team rules (directives): {len(created)} added")
+    except IncidentMemoryError as exc:
+        print(f"  team rules not added: {exc}", file=sys.stderr)
     try:
         memory.ensure_runbook()
         print("  living runbook (mental model) ready")

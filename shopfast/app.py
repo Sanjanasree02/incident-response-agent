@@ -36,6 +36,10 @@ FAULT_RESPONSES: dict[Fault, tuple[int, str]] = {
     Fault.AUTH_TOKEN_EXPIRED: (401, "Session token expired"),
     Fault.DB_POOL_EXHAUST: (503, "Orders database unavailable"),
     Fault.PAYMENT_GATEWAY_TIMEOUT: (504, "Payment gateway timed out"),
+    Fault.INVENTORY_DEADLOCK: (500, "Stock reservation failed"),
+    Fault.CERT_EXPIRED: (502, "Upstream TLS handshake failed"),
+    Fault.SEARCH_DISK_FULL: (503, "Catalog search unavailable"),
+    Fault.PROMO_CONFIG_BROKEN: (500, "Promotion engine error"),
 }
 
 
@@ -83,7 +87,7 @@ def product(product_id: str) -> dict:
 
 @app.get("/products")
 def list_products() -> list[dict]:
-    fail_if_active(Fault.REDIS_TIMEOUT)
+    fail_if_active(Fault.REDIS_TIMEOUT, Fault.SEARCH_DISK_FULL)
     return list(PRODUCTS.values())
 
 
@@ -96,14 +100,16 @@ def add_to_cart(item: CartItem) -> dict:
 
 @app.post("/login")
 def login(credentials: LoginRequest) -> dict:
-    fail_if_active(Fault.AUTH_TOKEN_EXPIRED)
+    fail_if_active(Fault.CERT_EXPIRED, Fault.AUTH_TOKEN_EXPIRED)
     return {"token": secrets.token_urlsafe(16), "username": credentials.username}
 
 
 @app.post("/checkout")
 def checkout(order: CheckoutRequest) -> dict:
     total = sum(product(item.product_id)["price"] * item.quantity for item in order.items)
-    fail_if_active(Fault.DB_POOL_EXHAUST, Fault.PAYMENT_GATEWAY_TIMEOUT)  # DB is reached before the gateway
+    # Order of dependencies a checkout hits: orders DB, stock reservation, promotions, payment gateway.
+    fail_if_active(Fault.DB_POOL_EXHAUST, Fault.INVENTORY_DEADLOCK, Fault.PROMO_CONFIG_BROKEN,
+                   Fault.PAYMENT_GATEWAY_TIMEOUT)
     return {"order_id": f"ORD-{secrets.randbelow(10**8):08d}", "total": round(total, 2)}
 
 

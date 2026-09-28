@@ -35,14 +35,18 @@ class FakeMemory:
     def retain_outcome(self, incident, outcome):
         self.calls.append(("retain_outcome", incident, outcome))
 
+    def team_rules(self):
+        return []
+
 
 class FakeAdvisor:
     def __init__(self, error=None):
         self.calls = []
         self._error = error
 
-    def suggest(self, incident, similar, patterns):
+    def suggest(self, incident, similar, patterns, rules=()):
         self.calls.append((incident, similar, patterns))
+        self.rules = list(rules)
         if self._error:
             raise self._error
         return Suggestion(similar_incidents=similar, learned_patterns=patterns, probable_root_cause="Pool",
@@ -124,8 +128,9 @@ class FakeShop:
 
 
 class ActionAdvisor(FakeAdvisor):
-    def suggest(self, incident, similar, patterns, actions=(), tried_actions=()):
+    def suggest(self, incident, similar, patterns, actions=(), tried_actions=(), rules=()):
         self.calls.append((incident, similar, patterns, list(actions), list(tried_actions)))
+        self.rules = list(rules)
         return Suggestion(similar_incidents=similar, learned_patterns=patterns, probable_root_cause="Pool exhausted",
                           fix_steps=["Roll back (INC-1042)"], confidence="high", memory_used=True,
                           proposed_action="rollback_payment_api", action_reason="Rollback fixed INC-1042")
@@ -254,7 +259,7 @@ UNRELATED = SimilarIncident(
 class RelevantOnlyAdvisor(ActionAdvisor):
     """Judges only RECORDED relevant, like the real advisor filtering recall."""
 
-    def suggest(self, incident, similar, patterns, actions=(), tried_actions=()):
+    def suggest(self, incident, similar, patterns, actions=(), tried_actions=(), rules=()):
         suggestion = super().suggest(incident, similar, patterns, actions, tried_actions)
         return suggestion.model_copy(update={"similar_incidents": [s for s in similar if s is RECORDED]})
 
@@ -380,3 +385,51 @@ def test_runbook_and_search_pass_through_memory():
     service = IncidentService(PostmortemMemory(), FakeAdvisor())
     assert service.runbook() == "runbook table"
     assert service.search_memory("pool", 3) == ["pool:3"]
+
+
+# team rules (Hindsight directives)
+
+from agent.models import TeamRule  # noqa: E402
+
+RULE = TeamRule(name="prefer-rollback-after-change", content="Prefer rolling back a change that preceded the failure.",
+                priority=20)
+
+
+class RulesMemory(FakeMemory):
+    def __init__(self, rules=(RULE,), error=None, **kwargs):
+        super().__init__(**kwargs)
+        self._rules, self._rules_error, self.added = list(rules), error, []
+
+    def team_rules(self):
+        if self._rules_error:
+            raise self._rules_error
+        return self._rules
+
+    def add_team_rule(self, rule):
+        self.added.append(rule)
+
+
+def test_analyze_gives_team_rules_from_memory_to_the_advisor():
+    advisor = ActionAdvisor()
+    IncidentService(RulesMemory(), advisor, shop=FakeShop()).analyze_incident(INCIDENT)
+    assert advisor.rules == [RULE]
+
+
+def test_analyze_without_shop_also_gets_rules():
+    advisor = FakeAdvisor()
+    IncidentService(RulesMemory(), advisor).analyze_incident(INCIDENT)
+    assert advisor.rules == [RULE]
+
+
+def test_rules_unavailable_does_not_block_analysis():
+    advisor = ActionAdvisor()
+    suggestion = IncidentService(RulesMemory(error=IncidentMemoryError("down")), advisor,
+                                 shop=FakeShop()).analyze_incident(INCIDENT)
+    assert advisor.rules == [] and suggestion.proposed_action == "rollback_payment_api"
+
+
+def test_add_and_list_team_rules_pass_through():
+    memory = RulesMemory()
+    service = IncidentService(memory, FakeAdvisor())
+    service.add_team_rule(RULE)
+    assert memory.added == [RULE] and service.team_rules() == [RULE]

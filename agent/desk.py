@@ -1,55 +1,41 @@
 """Stateful front door for the REST API and the MCP server.
 
-Remembers open incidents by ID (incident, latest suggestion, action log), so a caller can analyze an incident in one
-call and act on it, record its outcome or ask for a postmortem in later calls by ID only.
+Keeps open incidents by ID (incident, latest suggestion, action log, postmortem) in an IncidentStore, so a caller can
+analyze an incident in one call and act on it, record its outcome or ask for a postmortem in later calls by ID only,
+even after a restart.
 """
 
-from collections import OrderedDict
-from dataclasses import dataclass, field
 from threading import Lock
 
-from agent.models import Incident, Outcome, Postmortem, RemediationAttempt, Suggestion
+from agent.models import Incident, Outcome, Postmortem, RemediationAttempt, TeamRule
 from agent.service import IncidentService
+from agent.store import IncidentStore, OpenIncident
 
-MAX_OPEN_INCIDENTS = 200
+__all__ = ["IncidentDesk", "OpenIncident", "UnknownIncident"]
 
 
 class UnknownIncident(KeyError):
-    """The incident ID was never analyzed here, or it was dropped to keep the store bounded."""
-
-
-@dataclass
-class OpenIncident:
-    incident: Incident
-    suggestion: Suggestion
-    attempts: list[RemediationAttempt] = field(default_factory=list)
-
-    @property
-    def resolved(self) -> bool:
-        return any(a.verified for a in self.attempts)
+    """The incident ID was never analyzed here."""
 
 
 class IncidentDesk:
-    def __init__(self, service: IncidentService, max_open: int = MAX_OPEN_INCIDENTS) -> None:
+    def __init__(self, service: IncidentService, store: IncidentStore | None = None) -> None:
         self._service = service
-        self._open: OrderedDict[str, OpenIncident] = OrderedDict()
-        self._max_open = max_open
-        self._lock = Lock()
+        self._store = store or IncidentStore(":memory:")
+        self._lock = Lock()  # one change at a time per desk, so two calls cannot interleave on one incident
 
     def _keep(self, item: OpenIncident) -> OpenIncident:
-        with self._lock:
-            self._open[item.incident.incident_id] = item
-            self._open.move_to_end(item.incident.incident_id)
-            while len(self._open) > self._max_open:
-                self._open.popitem(last=False)
+        self._store.save(item)
         return item
 
     def get(self, incident_id: str) -> OpenIncident:
-        with self._lock:
-            item = self._open.get(incident_id)
+        item = self._store.get(incident_id)
         if item is None:
             raise UnknownIncident(incident_id)
         return item
+
+    def recent(self, limit: int = 20) -> list[OpenIncident]:
+        return self._store.recent(limit)
 
     def detect(self) -> OpenIncident | None:
         """Probe ShopFast; if something fails, open and analyze an incident from its latest alert."""
@@ -61,17 +47,21 @@ class IncidentDesk:
 
     def reanalyze(self, incident_id: str) -> OpenIncident:
         """Ask again without the actions already tried for this incident."""
-        item = self.get(incident_id)
-        item.suggestion = self._service.analyze_incident(item.incident, tried_actions=[a.action for a in item.attempts])
-        return item
+        with self._lock:
+            item = self.get(incident_id)
+            item.suggestion = self._service.analyze_incident(item.incident,
+                                                             tried_actions=[a.action for a in item.attempts])
+            return self._keep(item)
 
     def act(self, incident_id: str, action: str | None = None) -> RemediationAttempt:
         """Run the proposed action (or `action`, an engineer's choice). The caller is the human approver."""
-        item = self.get(incident_id)
-        attempt = self._service.remediate(item.incident, item.suggestion, approved=True,
-                                          previous_attempts=list(item.attempts), action=action)
-        item.attempts.append(attempt)
-        return attempt
+        with self._lock:
+            item = self.get(incident_id)
+            attempt = self._service.remediate(item.incident, item.suggestion, approved=True,
+                                              previous_attempts=list(item.attempts), action=action)
+            item.attempts.append(attempt)
+            self._keep(item)
+            return attempt
 
     def record_outcome(self, incident_id: str, resolved: bool, actual_root_cause: str,
                        steps_that_worked: list[str], failed_attempts: list[str], notes: str = "") -> Outcome:
@@ -82,11 +72,20 @@ class IncidentDesk:
         return outcome
 
     def postmortem(self, incident_id: str) -> Postmortem:
-        item = self.get(incident_id)
-        return self._service.write_postmortem(item.incident, item.suggestion, item.attempts)
+        with self._lock:
+            item = self.get(incident_id)
+            item.postmortem = self._service.write_postmortem(item.incident, item.suggestion, item.attempts)
+            self._keep(item)
+            return item.postmortem
 
     def runbook(self) -> str | None:
         return self._service.runbook()
+
+    def team_rules(self) -> list[TeamRule]:
+        return self._service.team_rules()
+
+    def add_team_rule(self, rule: TeamRule) -> None:
+        self._service.add_team_rule(rule)
 
     def search(self, query: str, limit: int = 10) -> list[str]:
         return self._service.search_memory(query, limit)

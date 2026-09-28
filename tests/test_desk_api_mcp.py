@@ -9,6 +9,7 @@ from agent.desk import IncidentDesk, UnknownIncident
 from agent.memory import IncidentMemoryError
 from agent.models import ShopFastAlert
 from agent.service import IncidentService
+from agent.store import IncidentStore
 from api import app as api
 from mcp_server import server as mcp
 from tests.test_service import BROKEN, HEALTHY, ActionAdvisor, FakeShop, PostmortemMemory
@@ -35,9 +36,9 @@ class DetectingShop(FakeShop):
         return ALERT
 
 
-def _desk(broken=True, memory=None, max_open=200):
+def _desk(broken=True, memory=None, store=None):
     service = IncidentService(memory or PostmortemMemory(), ActionAdvisor(), shop=DetectingShop(broken))
-    return IncidentDesk(service, max_open=max_open)
+    return IncidentDesk(service, store)
 
 
 # desk
@@ -60,15 +61,26 @@ def test_desk_detect_returns_none_when_healthy():
     assert _desk(broken=False).detect() is None
 
 
-def test_desk_unknown_incident_and_bounded_store():
-    desk = _desk(max_open=1)
+def test_desk_unknown_incident():
     with pytest.raises(UnknownIncident):
-        desk.get("INC-9999")
-    from agent.models import Incident
-    first = desk.analyze(Incident(**NEW))
-    desk.analyze(Incident(**NEW))
-    with pytest.raises(UnknownIncident):
-        desk.get(first.incident.incident_id)
+        _desk().get("INC-9999")
+
+
+def test_desk_state_survives_a_restart(tmp_path):
+    db = tmp_path / "incidents.db"
+    desk = _desk(store=IncidentStore(db))
+    item = desk.detect()
+    incident_id = item.incident.incident_id
+    desk.act(incident_id)
+    desk.postmortem(incident_id)
+
+    restarted = _desk(store=IncidentStore(db))  # new process, same file
+    again = restarted.get(incident_id)
+    assert again.incident == item.incident
+    assert again.suggestion.proposed_action == "rollback_payment_api"
+    assert [a.action for a in again.attempts] == ["rollback_payment_api"] and again.resolved
+    assert again.postmortem is not None and again.postmortem.saved_to_memory
+    assert [i.incident.incident_id for i in restarted.recent()] == [incident_id]
 
 
 def test_desk_reanalyze_passes_tried_actions():
@@ -170,7 +182,7 @@ def mcp_desk():
 def test_mcp_lists_tools_with_destructive_hints():
     tools = {t.name: t for t in asyncio.run(mcp.server.list_tools())}
     assert set(tools) == {"detect_incident", "analyze_incident", "run_action", "next_suggestion", "record_outcome",
-                          "write_postmortem", "get_runbook", "search_memory"}
+                          "write_postmortem", "get_runbook", "list_team_rules", "search_memory"}
     assert tools["run_action"].annotations.destructive_hint is True
     assert tools["analyze_incident"].annotations.read_only_hint is True
 
@@ -197,5 +209,33 @@ def test_mcp_detect_when_healthy():
     mcp.set_desk(_desk(broken=False))
     try:
         assert mcp.detect_incident()["healthy"] is True
+    finally:
+        mcp.set_desk(None)
+
+
+# team rules over API and MCP
+
+from tests.test_service import RULE, RulesMemory  # noqa: E402
+
+
+def test_api_lists_and_adds_team_rules(monkeypatch):
+    monkeypatch.setenv("AGENT_API_KEY", KEY)
+    memory = RulesMemory()
+    api.app.dependency_overrides[api.get_desk] = lambda: _desk(memory=memory)
+    try:
+        client = TestClient(api.app)
+        assert client.get("/rules", headers=_h()).json()[0]["name"] == RULE.name
+        new = {"name": "no-deploys-during-sale", "content": "Never propose a deploy during a flash sale."}
+        assert client.post("/rules", json=new, headers=_h()).status_code == 201
+        assert memory.added[0].name == "no-deploys-during-sale"
+        assert client.post("/rules", json={"name": "Bad", "content": "x"}, headers=_h()).status_code == 422
+    finally:
+        api.app.dependency_overrides.clear()
+
+
+def test_mcp_lists_team_rules():
+    mcp.set_desk(_desk(memory=RulesMemory()))
+    try:
+        assert mcp.list_team_rules()["rules"][0]["name"] == RULE.name
     finally:
         mcp.set_desk(None)

@@ -1,0 +1,22 @@
+[
+  {
+    "name": "prefer-rollback-after-change",
+    "content": "When a failure started right after a deploy or a configuration change, prefer rolling that change back over a forward fix.",
+    "priority": 20
+  },
+  {
+    "name": "no-restart-as-first-fix",
+    "content": "Do not propose restarting pods as the first fix unless a recorded incident shows that a restart fixed the same failure.",
+    "priority": 15
+  },
+  {
+    "name": "cite-or-say-none",
+    "content": "Every recommendation cites the past incident it is based on, or says plainly that no past incident matches.",
+    "priority": 10
+  },
+  {
+    "name": "blameless-postmortems",
+    "content": "Postmortems are blameless: describe systems, signals and decisions; never name or blame individuals.",
+    "priority": 10
+  }
+]

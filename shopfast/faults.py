@@ -1,5 +1,5 @@
 """Fault switches for the ShopFast demo. Each fault matches a pattern in the seed incident history,
-except PAYMENT_GATEWAY_TIMEOUT, which has no history and demonstrates the learning loop."""
+except PAYMENT_GATEWAY_TIMEOUT and PROMO_CONFIG_BROKEN, which have no history and demonstrate the learning loop."""
 
 from enum import Enum
 
@@ -9,6 +9,10 @@ class Fault(str, Enum):
     REDIS_TIMEOUT = "REDIS_TIMEOUT"
     AUTH_TOKEN_EXPIRED = "AUTH_TOKEN_EXPIRED"
     PAYMENT_GATEWAY_TIMEOUT = "PAYMENT_GATEWAY_TIMEOUT"
+    INVENTORY_DEADLOCK = "INVENTORY_DEADLOCK"
+    CERT_EXPIRED = "CERT_EXPIRED"
+    SEARCH_DISK_FULL = "SEARCH_DISK_FULL"
+    PROMO_CONFIG_BROKEN = "PROMO_CONFIG_BROKEN"
 
 
 # Realistic log line each fault produces. Kept here so app and tests share one source.
@@ -27,6 +31,22 @@ FAULT_LOGS: dict[Fault, str] = {
     Fault.PAYMENT_GATEWAY_TIMEOUT: (
         "ERROR payment-api httpx.ReadTimeout: POST https://api.paygate.example/v1/charges "
         "timed out after 10.0s"
+    ),
+    Fault.INVENTORY_DEADLOCK: (
+        "ERROR inventory-service psycopg2.errors.DeadlockDetected: deadlock detected "
+        "DETAIL: Process 5120 waits for ShareLock on transaction 118233; blocked by process 5127."
+    ),
+    Fault.CERT_EXPIRED: (
+        "ERROR api-gateway ssl.SSLCertVerificationError: certificate verify failed: "
+        "certificate has expired (auth-service.shopfast.internal:443)"
+    ),
+    Fault.SEARCH_DISK_FULL: (
+        "WARN search-service elasticsearch cluster health status changed from [YELLOW] to [RED]; "
+        "reason: [shards unassigned] disk watermark [95%] exceeded on node es-data-1"
+    ),
+    Fault.PROMO_CONFIG_BROKEN: (
+        "ERROR promotions-service KeyError: 'discount_pct' while applying promotion FESTIVE25 "
+        "(config version 2026-09-28.3)"
     ),
 }
 

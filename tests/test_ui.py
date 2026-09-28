@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest
 from agent import config
 from agent.memory import IncidentMemoryError
 from agent.models import (LearnedPattern, Postmortem, RemediationAction, RemediationAttempt, SimilarIncident,
-                          Suggestion)
+                          Suggestion, TeamRule)
 from shopfast.faults import FAULT_LOGS, Fault
 
 APP = str(Path(__file__).resolve().parent.parent / "ui" / "app.py")
@@ -33,6 +33,8 @@ class FakeService:
                  detect_error=None, postmortem_error=None, runbook="| failure | fix |"):
         self.analyzed, self.recorded, self.tried, self.remediated = [], [], [], []
         self._postmortem_error, self._runbook = postmortem_error, runbook
+        self.rules = [TeamRule(name="prefer-rollback-after-change", content="Prefer rolling back a recent change.",
+                               priority=20)]
         self._detected, self._detect_error = detected, detect_error
         self._suggestion = suggestion or _suggestion()
         self._next = next_suggestion
@@ -77,6 +79,12 @@ class FakeService:
 
     def runbook(self):
         return self._runbook
+
+    def team_rules(self):
+        return list(self.rules)
+
+    def add_team_rule(self, rule):
+        self.rules.append(rule)
 
 
 def _app(service: FakeService) -> AppTest:
@@ -476,3 +484,68 @@ def test_living_runbook_loads_on_request(runbook, expected):
 def test_integrate_tab_shows_mcp_and_api_usage():
     text = _all_text(_app(FakeService()))
     assert "mcp_server.server" in text and "/incidents/detect" in text and "X-API-Key" in text
+
+
+def test_learning_curve_shows_averages_and_range_across_repeats(tmp_path):
+    row = {"round": 2, "incidents": 8.0, "relevant_recall": 7.67, "resolved": 8.0, "agent_fixed": 8.0,
+           "agent_first_try": 7.33, "agent_first_try_min": 7, "agent_first_try_max": 8, "actions": 9.0,
+           "wrong_actions": 0.67, "wrong_actions_min": 0, "wrong_actions_max": 1, "engineer_actions": 0.0,
+           "llm_errors": 0.0}
+    path = tmp_path / "curve.json"
+    path.write_text(json.dumps({"repeats": 3, "bank_id": "shopfast-curve-2", "with_memory": [row], "memory_off": None}))
+    at = AppTest.from_file(APP, default_timeout=10)
+    at.session_state["service"] = FakeService()
+    at.session_state["curve_results_path"] = str(path)
+    at.run()
+    text = _all_text(at)
+    assert "Round 2: memory recalled 7.67/8, first action fixed 7.33/8 (range 7-8), wrong actions 0.67" in text
+    assert "averaged over 3 runs" in text
+
+
+# persistence
+
+def test_open_incident_and_action_log_survive_a_page_refresh():
+    service = FakeService(_with_action())
+    at = _submit(_app(service))
+    at = at.button(key="approve_action").click().run()
+    refreshed = _app(FakeService())  # new browser session, same SQLite file
+    assert not refreshed.exception
+    text = _all_text(refreshed)
+    assert "Connection pool exhausted (INC-1042)" in text
+    assert "rollback_payment_api (chosen by agent)" in text
+
+
+def test_can_switch_between_open_incidents():
+    at = _submit(_app(FakeService()), title="Checkout failing")
+    at = _submit(at, title="Login failing")
+    first_id = next(i for i, (inc, _) in at.session_state["incidents"].items() if inc.title == "Checkout failing")
+    at.selectbox(key="open_incident").select(first_id).run()
+    assert at.session_state["last_id"] == first_id
+
+
+# team rules
+
+def test_suggestion_names_the_team_rules_it_followed():
+    at = _submit(_app(FakeService(_suggestion(team_rules=["prefer-rollback-after-change"]))))
+    assert "Team rules from memory the agent followed: prefer-rollback-after-change" in _all_text(at)
+
+
+def test_team_rules_load_and_add():
+    service = FakeService()
+    at = _app(service)
+    at = at.button(key="load_rules").click().run()
+    assert "[20] prefer-rollback-after-change: Prefer rolling back" in _all_text(at)
+    at.text_input(key="rule_name").input("no-deploys-during-sale")
+    at.text_area(key="rule_content").input("Never propose a deploy during a flash sale.")
+    at = at.button(key="add_rule").click().run()
+    assert [r.name for r in service.rules] == ["prefer-rollback-after-change", "no-deploys-during-sale"]
+    assert any("saved to memory" in s.value for s in at.success)
+
+
+def test_invalid_team_rule_is_rejected():
+    service = FakeService()
+    at = _app(service)
+    at.text_input(key="rule_name").input("Bad Name")
+    at.text_area(key="rule_content").input("short")
+    at = at.button(key="add_rule").click().run()
+    assert any("Invalid rule" in e.value for e in at.error) and len(service.rules) == 1
