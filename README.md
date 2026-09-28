@@ -55,4 +55,4 @@ pytest                                                     # tests
 ```
 
 ## Status
-All modules are built and tested (278 tests passing): config, models, log normalizer, Hindsight memory, seed script, Groq advisor, service, Streamlit UI and the ShopFast mock shop. The full demo (existing memory, new incident type, learning loop) was verified on 2026-09-28; acceptance criteria AC1-AC5 are met. See `docs/DESIGN.md` for details.
+All modules are built and tested (282 tests passing): config, models, log normalizer, Hindsight memory, seed script, Groq advisor, service, Streamlit UI and the ShopFast mock shop. The full demo (existing memory, new incident type, learning loop) was verified on 2026-09-28; acceptance criteria AC1-AC5 are met. See `docs/DESIGN.md` for details.

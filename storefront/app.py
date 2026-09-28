@@ -13,11 +13,14 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-PAGE = Path(__file__).resolve().parent / "static" / "index.html"
+STATIC = Path(__file__).resolve().parent / "static"
+PAGE = STATIC / "index.html"
 
 app = FastAPI(title="ShopFast storefront")
+app.mount("/static/images", StaticFiles(directory=STATIC / "images"), name="images")
 
 
 def shopfast_url() -> str:

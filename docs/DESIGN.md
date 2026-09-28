@@ -119,7 +119,7 @@ Safety: actions are simulated in ShopFast (`shopfast/remediations.py`), some are
 - Learn: `record_outcome` calls `retain` with the new incident and its outcome, including failed attempts.
 
 ## Incident IDs
-Generated automatically when not supplied: `INC-` + UTC timestamp `yymmddHHMMSS` + 2 random digits (for example `INC-26092814301207`). Seed incidents keep short IDs (`INC-1042`). Pattern: `^INC-\d{4,16}$`.
+Generated automatically when not supplied: `INC-` + UTC timestamp `yymmddHHMMSS` + 4 random digits (for example `INC-2609281430120734`). The ID is the Hindsight `document_id`, so it must be unique: within a process an ID is never repeated, even within one second; across processes a collision needs the same second and the same 1-in-10,000 suffix. (Earlier IDs used 2 digits, which collided 1 in 100 within a second.) Seed incidents keep short IDs (`INC-1042`). Pattern: `^INC-\d{4,16}$`.
 
 ## Demo reset
 The Hindsight SDK does not document a bank delete call, and deleting memory is irreversible. Instead, each demo run uses a fresh bank:

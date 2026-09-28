@@ -101,3 +101,32 @@ def test_shopfast_url_from_environment(monkeypatch):
     monkeypatch.setenv("SHOPFAST_HOST", "127.0.0.1")
     monkeypatch.setenv("SHOPFAST_PORT", "8001")
     assert store.shopfast_url() == "http://127.0.0.1:8001"
+
+
+# product images
+
+import re  # noqa: E402
+
+from shopfast.app import PRODUCTS  # noqa: E402
+
+
+def _image_paths(page: str) -> dict[str, str]:
+    return dict(re.findall(r'"(sku-\d+)":\s*"(/static/images/[a-z-]+\.svg)"', page))
+
+
+def test_every_shopfast_product_has_an_image(storefront):
+    images = _image_paths(storefront.get("/").text)
+    assert set(images) == set(PRODUCTS)
+
+
+def test_images_are_served_as_svg_without_scripts(storefront):
+    for path in _image_paths(storefront.get("/").text).values():
+        response = storefront.get(path)
+        assert response.status_code == 200, path
+        assert "image/svg+xml" in response.headers["content-type"]
+        assert "<script" not in response.text.lower() and "href=" not in response.text.lower()
+
+
+def test_unknown_image_is_not_found(storefront):
+    assert storefront.get("/static/images/missing.svg").status_code == 404
+    assert storefront.get("/static/../app.py").status_code == 404

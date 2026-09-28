@@ -1,6 +1,8 @@
 """Data models for incidents, outcomes and agent suggestions. All user input is validated here."""
 
 import secrets
+import threading
+import time
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated
@@ -16,10 +18,32 @@ SERVICE_PATTERN = r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
 Step = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_TEXT_CHARS)]
 
 
+_id_lock = threading.Lock()
+_id_second = ""
+_ids_this_second: set[int] = set()
+
+
 def new_incident_id() -> str:
-    """Generate an ID like INC-26092814301207: UTC timestamp plus 2 random digits."""
-    stamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M%S")
-    return f"INC-{stamp}{secrets.randbelow(100):02d}"
+    """Generate an ID like INC-2609281430120734: UTC timestamp plus 4 random digits.
+
+    The ID is the Hindsight document_id, so two incidents must never share one: within this process an ID is
+    never repeated, and across processes a collision needs the same second and the same 1-in-10,000 suffix.
+    """
+    global _id_second
+    with _id_lock:
+        while True:
+            stamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M%S")
+            if stamp != _id_second:
+                _id_second = stamp
+                _ids_this_second.clear()
+            if len(_ids_this_second) < 10_000:
+                break
+            time.sleep(0.01)  # all suffixes used this second: wait for the next one
+        suffix = secrets.randbelow(10_000)
+        while suffix in _ids_this_second:
+            suffix = secrets.randbelow(10_000)
+        _ids_this_second.add(suffix)
+        return f"INC-{stamp}{suffix:04d}"
 
 
 class Severity(str, Enum):

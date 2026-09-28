@@ -155,3 +155,13 @@ def test_seed_logs_have_no_timestamps_left_after_normalizing():
 
 def test_every_fault_has_a_log_line():
     assert set(FAULT_LOGS) == set(Fault)
+
+
+def test_incident_ids_never_collide_within_the_same_second():
+    # Two incidents opened in the same second must not share an ID: the ID is the Hindsight document_id,
+    # so a collision would overwrite another incident's memory.
+    from agent.models import new_incident_id
+
+    ids = [new_incident_id() for _ in range(2000)]
+    assert len(set(ids)) == len(ids)
+    assert all(re.fullmatch(INCIDENT_ID_PATTERN, i) for i in ids)

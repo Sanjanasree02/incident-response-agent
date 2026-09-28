@@ -20,7 +20,8 @@
   .sub { color: var(--muted); margin: 0 0 20px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
   .product { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .tile { height: 110px; border-radius: 8px; background: #eef1f7; display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 700; color: var(--brand); }
+  .tile { height: 140px; border-radius: 8px; background: #eef1f7; display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 700; color: var(--brand); overflow: hidden; }
+  .tile img { width: 100%; height: 100%; object-fit: cover; }
   .name { font-weight: 600; }
   .price { font-size: 20px; font-weight: 700; }
   button { font: inherit; border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; background: var(--brand); color: #fff; font-weight: 600; }
@@ -75,6 +76,12 @@
 <script>
 // Every status and error shown here comes from the real ShopFast response the storefront forwards.
 const cart = new Map();          // product id -> {product, quantity}
+// Illustrations for ShopFast's product IDs (the API has no image field); unknown products show their initial.
+const IMAGES = {
+  "sku-100": "/static/images/running-shoes.svg",
+  "sku-200": "/static/images/rain-jacket.svg",
+  "sku-300": "/static/images/water-bottle.svg",
+};
 let products = [];
 let checkoutFailedBefore = false;
 
@@ -130,7 +137,16 @@ function renderProducts() {
   grid.replaceChildren();
   for (const product of products) {
     const card = el("div", "product");
-    card.appendChild(el("div", "tile", product.name.charAt(0)));
+    const tile = el("div", "tile");
+    if (IMAGES[product.id]) {
+      const img = el("img");
+      img.src = IMAGES[product.id];
+      img.alt = product.name;
+      tile.appendChild(img);
+    } else {
+      tile.textContent = product.name.charAt(0);
+    }
+    card.appendChild(tile);
     card.appendChild(el("div", "name", product.name));
     card.appendChild(el("div", "price", money(product.price)));
     const note = el("div", "note");
