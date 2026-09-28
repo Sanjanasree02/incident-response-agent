@@ -58,13 +58,11 @@ class IncidentStore:
             "[" + ",".join(a.model_dump_json() for a in item.attempts) + "]",
             item.postmortem.model_dump_json() if item.postmortem else None,
         )
+        # Delete then insert, not upsert: the row gets a new rowid, so recent() still puts the last save first when
+        # two saves share a timestamp (the Windows clock often returns the same value for saves microseconds apart).
         with self._lock, self._conn:
-            self._conn.execute(
-                "INSERT INTO incidents VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(incident_id) DO UPDATE SET "
-                "updated_at=excluded.updated_at, incident=excluded.incident, suggestion=excluded.suggestion, "
-                "attempts=excluded.attempts, postmortem=excluded.postmortem",
-                row,
-            )
+            self._conn.execute("DELETE FROM incidents WHERE incident_id = ?", (item.incident.incident_id,))
+            self._conn.execute("INSERT INTO incidents VALUES (?, ?, ?, ?, ?, ?)", row)
 
     def get(self, incident_id: str) -> OpenIncident | None:
         with self._lock:

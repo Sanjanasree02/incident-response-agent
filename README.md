@@ -92,7 +92,7 @@ curl http://127.0.0.1:8002/rules -H "X-API-Key: $AGENT_API_KEY"
 Every endpoint except `/health` needs `X-API-Key`. Without `AGENT_API_KEY` in `.env` the API refuses all calls.
 
 ## Status
-All modules are built and tested (385 tests passing). The full demo (existing memory, new incident type, learning loop) was verified on 2026-09-28; acceptance criteria AC1-AC5 are met. See `docs/DESIGN.md` for details.
+All modules are built and tested (386 tests passing). The full demo (existing memory, new incident type, learning loop) was verified on 2026-09-28; acceptance criteria AC1-AC5 are met. See `docs/DESIGN.md` for details.
 
 <!-- curve:start -->
 Latest learning curve (2026-09-28, 8 faults x 3 rounds, averaged over 2 independent runs on fresh banks, Groq + Hindsight Cloud):

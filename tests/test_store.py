@@ -1,5 +1,7 @@
 """SQLite store for open incidents."""
 
+from datetime import datetime
+
 from agent.models import Incident, Postmortem, RemediationAttempt, Suggestion
 from agent.store import IncidentStore, OpenIncident
 
@@ -32,6 +34,21 @@ def test_save_updates_in_place_and_recent_is_newest_first():
     store.save(_item("INC-2001"))  # updated again: now the newest
     assert [i.incident.incident_id for i in store.recent()] == ["INC-2001", "INC-2002"]
     assert len(store.recent(limit=1)) == 1
+
+
+def test_recent_orders_by_last_save_when_timestamps_tie(monkeypatch):
+    # The Windows clock can return the same timestamp for saves made microseconds apart.
+    class FrozenClock:
+        @staticmethod
+        def now(tz=None):
+            return datetime(2026, 9, 29, 12, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr("agent.store.datetime", FrozenClock)
+    store = IncidentStore(":memory:")
+    store.save(_item("INC-2001"))
+    store.save(_item("INC-2002"))
+    store.save(_item("INC-2001"))
+    assert [i.incident.incident_id for i in store.recent()] == ["INC-2001", "INC-2002"]
 
 
 def test_unknown_incident_is_none():
