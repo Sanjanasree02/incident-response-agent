@@ -56,4 +56,16 @@ ACTIONS: dict[str, Remediation] = {
         frozenset({Fault.PROMO_CONFIG_BROKEN}),
     ),
     "restart_promotions_service": Remediation("Restart all promotions-service pods"),
+    "rotate_payment_gateway_key": Remediation(
+        "Refresh payment-api credentials from the secret manager and verify the merchant key",
+        frozenset({Fault.PAYMENT_CREDENTIAL_REJECTED}),
+    ),
+    "reconcile_inventory_reservations": Remediation(
+        "Reconcile pending inventory reservations against the warehouse stock ledger",
+        frozenset({Fault.INVENTORY_RESERVATION_CONFLICT}),
+    ),
+    "failover_shipping_provider": Remediation(
+        "Route shipping label requests to the configured secondary carrier",
+        frozenset({Fault.SHIPPING_PROVIDER_UNAVAILABLE}),
+    ),
 }

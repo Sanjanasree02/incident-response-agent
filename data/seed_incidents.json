@@ -323,5 +323,83 @@
     "resolution_steps": ["Update connection string to include all replica set members with replicaSet=rs0", "Make health check verify the DB connection", "Run upgrades one member at a time"],
     "failed_attempts": ["Restarted reviews-service; it still pointed only at reviews-mongo-0"],
     "lesson": "Always use a full replica set connection string. Health checks must test dependencies."
+  },
+  {
+    "incident_id": "INC-1160",
+    "service": "payment-api",
+    "severity": "SEV1",
+    "title": "Checkout rejected by payment provider after credential rotation",
+    "symptoms": "All checkout attempts started failing with provider authentication errors immediately after the secrets rotation job completed.",
+    "error_log": "2026-08-02T09:14:20Z ERROR payment-api httpx.HTTPStatusError: payment provider returned 401 invalid_api_key for merchant shopfast-prod",
+    "reported_at": "2026-08-02T09:18:00Z",
+    "root_cause": "The rotation job updated the provider key in the secret manager but payment-api kept using the old value because its secret mount was not refreshed.",
+    "resolution_steps": ["Refresh the payment-api secret mount", "Verify the active merchant key with a non-capturing provider health check", "Restart only the payment-api workers after confirming the new key is loaded"],
+    "failed_attempts": ["Retried failed charges without refreshing the credential"],
+    "lesson": "After rotating provider credentials, verify the running workload loaded the new secret before retrying transactions."
+  },
+  {
+    "incident_id": "INC-1161",
+    "service": "inventory-service",
+    "severity": "SEV2",
+    "title": "Checkout blocked by inventory reservation conflicts",
+    "symptoms": "Orders for popular products failed with conflict responses even though the warehouse dashboard showed units available.",
+    "error_log": "2026-08-04T14:33:09Z ERROR inventory-service ReservationConflict: requested quantity exceeds available stock after stale inventory snapshot",
+    "reported_at": "2026-08-04T14:37:00Z",
+    "root_cause": "A delayed warehouse feed left reservations out of sync with the authoritative stock ledger after a bulk import.",
+    "resolution_steps": ["Pause new reservations for affected SKUs", "Reconcile reservation rows against the warehouse stock ledger", "Replay the delayed inventory feed and verify available quantities"],
+    "failed_attempts": ["Raised checkout retry counts; retries created more conflicting reservations"],
+    "lesson": "Resolve reservation conflicts from the authoritative stock ledger; blind retries can amplify overselling."
+  },
+  {
+    "incident_id": "INC-1162",
+    "service": "shipping-service",
+    "severity": "SEV2",
+    "title": "Shipping labels unavailable during carrier outage",
+    "symptoms": "Paid orders queued for fulfillment because label creation repeatedly failed against the primary carrier API.",
+    "error_log": "2026-08-07T16:52:41Z ERROR shipping-service httpx.HTTPStatusError: carrier API returned 503 label creation unavailable after 3 retries",
+    "reported_at": "2026-08-07T16:56:00Z",
+    "root_cause": "The primary carrier had a regional outage, while the configured secondary carrier was healthy but not enabled for automatic failover.",
+    "resolution_steps": ["Route new label requests to the secondary carrier", "Keep failed label jobs queued with their idempotency keys", "Reconcile queued jobs after the primary carrier recovers"],
+    "failed_attempts": ["Repeated requests to the unavailable carrier without backoff"],
+    "lesson": "Use a tested carrier failover path and preserve idempotency when replaying queued label jobs."
+  },
+  {
+    "incident_id": "INC-1164",
+    "service": "payment-api",
+    "severity": "SEV1",
+    "title": "Payment authorization fails with invalid merchant key",
+    "symptoms": "Checkout returned gateway errors for every card type; the provider dashboard showed rejected API authentication.",
+    "error_log": "2026-08-12T11:06:31Z ERROR payment-api httpx.HTTPStatusError: payment provider returned 401 invalid_api_key for merchant shopfast-prod",
+    "reported_at": "2026-08-12T11:10:00Z",
+    "root_cause": "A deployment referenced the staging payment secret in production after a secret alias was renamed.",
+    "resolution_steps": ["Restore the production secret alias", "Refresh payment-api credentials from the secret manager", "Run a provider authorization check before reopening checkout traffic"],
+    "failed_attempts": ["Rolled back application code without correcting the secret alias"],
+    "lesson": "Validate secret names and environment scope during deployment; a code rollback does not repair a misbound production secret."
+  },
+  {
+    "incident_id": "INC-1165",
+    "service": "inventory-service",
+    "severity": "SEV2",
+    "title": "Oversell protection rejecting valid inventory reservations",
+    "symptoms": "Reservation conflicts increased after the nightly warehouse import, affecting several high-volume SKUs with positive stock counts.",
+    "error_log": "2026-08-15T02:19:54Z ERROR inventory-service ReservationConflict: requested quantity exceeds available stock after stale inventory snapshot",
+    "reported_at": "2026-08-15T02:24:00Z",
+    "root_cause": "The import updated available stock but did not clear stale holds left by a timed-out reservation worker.",
+    "resolution_steps": ["Identify and expire orphaned holds", "Reconcile reservations against the warehouse stock ledger", "Restart the timed-out worker after confirming its lease was released"],
+    "failed_attempts": ["Manually increased available stock without reconciling active holds"],
+    "lesson": "Inventory counts and reservation holds must be reconciled together before changing stock availability."
+  },
+  {
+    "incident_id": "INC-1166",
+    "service": "shipping-service",
+    "severity": "SEV2",
+    "title": "Carrier outage stopped order fulfillment",
+    "symptoms": "Fulfillment workers accumulated label jobs and carrier requests returned 503 across multiple regions.",
+    "error_log": "2026-08-19T07:41:12Z ERROR shipping-service httpx.HTTPStatusError: carrier API returned 503 label creation unavailable after 3 retries",
+    "reported_at": "2026-08-19T07:46:00Z",
+    "root_cause": "A carrier-side outage affected the primary endpoint, and shipping-service did not fail over to the secondary provider.",
+    "resolution_steps": ["Enable secondary-carrier routing", "Apply bounded exponential backoff to queued label requests", "Verify label creation and deduplicate any replayed jobs"],
+    "failed_attempts": ["Scaled shipping workers while every worker continued calling the unhealthy carrier"],
+    "lesson": "Scale only after routing around a provider outage; otherwise more workers increase pressure on the failing dependency."
   }
 ]

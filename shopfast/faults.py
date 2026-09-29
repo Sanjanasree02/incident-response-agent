@@ -13,6 +13,9 @@ class Fault(str, Enum):
     CERT_EXPIRED = "CERT_EXPIRED"
     SEARCH_DISK_FULL = "SEARCH_DISK_FULL"
     PROMO_CONFIG_BROKEN = "PROMO_CONFIG_BROKEN"
+    PAYMENT_CREDENTIAL_REJECTED = "PAYMENT_CREDENTIAL_REJECTED"
+    INVENTORY_RESERVATION_CONFLICT = "INVENTORY_RESERVATION_CONFLICT"
+    SHIPPING_PROVIDER_UNAVAILABLE = "SHIPPING_PROVIDER_UNAVAILABLE"
 
 
 # Realistic log line each fault produces. Kept here so app and tests share one source.
@@ -47,6 +50,18 @@ FAULT_LOGS: dict[Fault, str] = {
     Fault.PROMO_CONFIG_BROKEN: (
         "ERROR promotions-service KeyError: 'discount_pct' while applying promotion FESTIVE25 "
         "(config version 2026-09-28.3)"
+    ),
+    Fault.PAYMENT_CREDENTIAL_REJECTED: (
+        "ERROR payment-api httpx.HTTPStatusError: payment provider returned 401 "
+        "invalid_api_key for merchant shopfast-prod"
+    ),
+    Fault.INVENTORY_RESERVATION_CONFLICT: (
+        "ERROR inventory-service ReservationConflict: requested quantity exceeds available stock "
+        "after stale inventory snapshot"
+    ),
+    Fault.SHIPPING_PROVIDER_UNAVAILABLE: (
+        "ERROR shipping-service httpx.HTTPStatusError: carrier API returned 503 "
+        "label creation unavailable after 3 retries"
     ),
 }
 

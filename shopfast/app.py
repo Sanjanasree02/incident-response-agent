@@ -42,6 +42,9 @@ FAULT_RESPONSES: dict[Fault, tuple[int, str]] = {
     Fault.CERT_EXPIRED: (502, "Upstream TLS handshake failed"),
     Fault.SEARCH_DISK_FULL: (503, "Catalog search unavailable"),
     Fault.PROMO_CONFIG_BROKEN: (500, "Promotion engine error"),
+    Fault.PAYMENT_CREDENTIAL_REJECTED: (502, "Payment provider rejected credentials"),
+    Fault.INVENTORY_RESERVATION_CONFLICT: (409, "Inventory reservation conflict"),
+    Fault.SHIPPING_PROVIDER_UNAVAILABLE: (503, "Shipping provider unavailable"),
 }
 
 
@@ -122,6 +125,13 @@ def checkout(order: CheckoutRequest) -> dict:
     # Order of dependencies a checkout hits: orders DB, stock reservation, promotions, payment gateway.
     fail_if_active(Fault.DB_POOL_EXHAUST, Fault.INVENTORY_DEADLOCK, Fault.PROMO_CONFIG_BROKEN,
                    Fault.PAYMENT_GATEWAY_TIMEOUT)
+    fail_if_active(
+        Fault.DB_POOL_EXHAUST,
+        Fault.PAYMENT_GATEWAY_TIMEOUT,
+        Fault.PAYMENT_CREDENTIAL_REJECTED,
+        Fault.INVENTORY_RESERVATION_CONFLICT,
+        Fault.SHIPPING_PROVIDER_UNAVAILABLE,
+    )  # Checkout dependencies are reached in this order.
     return {"order_id": f"ORD-{secrets.randbelow(10**8):08d}", "total": round(total, 2)}
 
 

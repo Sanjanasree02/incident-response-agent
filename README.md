@@ -18,7 +18,7 @@ Shareable summaries: [project overview](docs/PROJECT_OVERVIEW.md), [pending work
 See [docs/DESIGN.md](docs/DESIGN.md) for architecture, data model, and task split.
 
 ## How Hindsight memory is used
-- **Seed:** 25 synthetic past incidents (`data/seed_incidents.json`) are stored with `retain` in the shared bank `shopfast-incidents`.
+- **Seed:** 31 synthetic past incidents (`data/seed_incidents.json`) are stored with `retain` in the shared bank `shopfast-incidents`.
 - **Recall:** each new incident is matched against memory with `recall`. Results include source chunks, so the agent cites incident IDs.
 - **Learn:** recorded outcomes, including failed fix attempts, are stored with `retain`. A new failure type gets a generic answer the first time and a specific, cited answer after its outcome is recorded. Fixes that an engineer chooses instead of the agent are recorded the same way, so the agent also learns from people.
 - **Reflect:** `reflect` with a JSON schema writes the postmortem, reasoning over this incident and every past one. The postmortem is appended to the incident's document (`update_mode="append"`), so later recalls of the incident bring back its lessons.
@@ -28,6 +28,9 @@ See [docs/DESIGN.md](docs/DESIGN.md) for architecture, data model, and task spli
 
 ## Measured learning
 `scripts/learning_curve.py` replays all 8 ShopFast faults once per round on a fresh bank, with memory on and with memory off, and averages several independent runs. The UI charts the result ("What the agent has learned" tab). Latest run: see [Status](#status).
+
+## Lifecycle modules
+The Streamlit app includes Groq-agent workflows for source and PR-diff review, CI/CD log triage, deployment comparison, runtime metrics, and frontend journey analysis. Findings must quote exact input evidence; code is sent as text and never executed. After analysis, engineers can explicitly record the actual cause, working fix, failed attempts, and lessons to Hindsight. Postmortems can be drafted from those confirmed details. Git providers, CI services, cloud metrics, browser telemetry, and deployment controls are not connected, so inputs are supplied manually.
 
 ## Project structure
 ```
@@ -39,6 +42,12 @@ storefront/ customer-facing ShopFast page (demo layer over the ShopFast API)
 ui/         Streamlit UI
 data/       synthetic seed incidents, evaluation and learning-curve results
 scripts/    seed, before/after evaluation, learning curve
+agent/      config, models, lifecycle analyzers, Hindsight memory wrapper, Groq advisor, service
+shopfast/   mock e-commerce API with fault switches
+storefront/ customer-facing ShopFast page (demo layer over the ShopFast API)
+ui/         Streamlit incident response and lifecycle modules
+data/       synthetic seed incidents
+scripts/    seed script
 tests/      unit tests
 docs/       design document, demo script, project overview, pending work, content templates
 ```
@@ -109,3 +118,4 @@ Latest learning curve (2026-09-28, 8 faults x 3 rounds, averaged over 2 independ
 
 After round 1, memory cut wrong actions on production to 0.75 per round on average, against 2.75 with memory off, and raised first-action fixes. The remaining misses with memory are rounds where the LLM proposed no action at all, so the engineer fallback stepped in; LLM results vary run to run, hence the averaging. Per-run details: `data/learning_curve.json`.
 <!-- curve:end -->
+All modules are built and tested: config, lifecycle analysis, models, log normalizer, Hindsight memory, seed script, Groq advisor, service, Streamlit UI and the ShopFast mock shop. See `docs/DESIGN.md` for details.

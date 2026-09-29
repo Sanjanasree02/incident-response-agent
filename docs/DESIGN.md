@@ -62,8 +62,9 @@ Scenario summary:
 | `agent/models.py` | Pydantic models; all input validation; incident ID generation | Done |
 | `agent/log_normalizer.py` | Strip noise from logs before recall | Done, tested |
 | `agent/memory.py` | Hindsight `create_bank`, `retain`, `recall`, learned patterns | Done, tested with fake client |
-| `agent/llm.py` | Groq call, JSON output, retries (honors 429 retry-after), `LLMError`, delimited untrusted input, relevance judging, citation check | Done, tested with fake client |
-| `agent/service.py` | `analyze_incident`, `record_outcome`; returns memory when LLM fails | Done, tested with fakes |
+| `agent/llm.py` | Groq incident advice and lifecycle analysis, JSON output, retries, untrusted-input handling, citation and evidence checks | Done, tested with fake client |
+| `agent/service.py` | Incident and lifecycle analysis, `record_outcome`; returns memory when incident LLM fails | Done, tested with fakes |
+| `agent/lifecycle.py` | Validated lifecycle assessment models, input redaction, local analysis helpers, and postmortem structure | Done, tested |
 | `shopfast/faults.py` | Fault switches and their log lines | Done |
 | `shopfast/app.py` | Mock shop endpoints; `/admin/faults`; faults return and log a timestamped error line | Done, tested |
 | `agent/actions.py` | ShopFast tool client: list and run allow-listed actions, health checks | Done, tested |
@@ -77,8 +78,9 @@ Scenario summary:
 | `api/app.py` | REST API, `X-API-Key` | Done, tested |
 | `mcp_server/server.py` | MCP server (stdio), 8 tools | Done, tested; smoke-tested over stdio against Hindsight Cloud |
 | `scripts/learning_curve.py` | Multi-round learning curve, memory on vs off | Done, tested, run |
+| `ui/app.py`, `ui/lifecycle.py` | Streamlit incident workflows and local lifecycle-analysis workspace; text-only rendering of untrusted input | Done, tested with AppTest |
 | `scripts/seed_memory.py` | Validate seed data, `--bank-id`, load into Hindsight | Done, tested |
-| `data/seed_incidents.json` | 25 synthetic incidents | Done |
+| `data/seed_incidents.json` | 31 synthetic incidents | Done |
 
 ## Storefront (demo layer)
 `storefront/` is a customer-facing page on port 8003: products, cart, checkout and a status bar. Its server forwards only `GET /products`, `POST /cart/items` and `POST /checkout` to ShopFast and returns ShopFast's status code and body unchanged, so every error shown is ShopFast's own. `/admin` and `/ops` are not forwarded, so the page cannot change faults or run actions. Same-origin forwarding means ShopFast needs no CORS change. The status bar is derived from the page's own responses; it is not a second monitor. ShopFast and the agent are unchanged.
@@ -137,6 +139,11 @@ Both sit on `agent/desk.py`, which keeps open incidents by ID (bounded, 200) so 
 - REST (`api/app.py`, port 8002, `127.0.0.1`): `POST /incidents/detect`, `POST /incidents/analyze`, `GET /incidents/{id}`, `POST /incidents/{id}/reanalyze`, `POST /incidents/{id}/actions`, `POST /incidents/{id}/outcome`, `POST /incidents/{id}/postmortem`, `GET /runbook`, `GET /memory/search`. `X-API-Key` must equal `AGENT_API_KEY` (constant-time compare); without the variable every call gets 503. Calling `/actions` is the approval. Errors: unknown incident 404, invalid input 422, action not allow-listed 409, Hindsight or ShopFast failure 502.
 - MCP (`mcp_server/server.py`, stdio, `mcp` 2.x `MCPServer`): tools `detect_incident`, `analyze_incident`, `run_action`, `next_suggestion`, `record_outcome`, `write_postmortem`, `get_runbook`, `list_team_rules`, `search_memory`. Writing tools carry `destructive_hint=True`, so clients confirm with the user first. Errors are returned as `{"error": ...}`, never raised. `.mcp.json` registers it for Claude Code.
 - Not built from the proposal: per-client banks and hashed per-client keys (one shared key and bank at demo scale), Python package, iframe.
+## Lifecycle workspace
+- Development/PR review, CI/CD triage, deployment comparison, runtime monitoring, and frontend journey analysis send submitted evidence to the configured Groq advisor. The model returns structured findings; each finding must quote an exact substring of the redacted input, and malformed or unsupported replies are retried rather than replaced with hard-coded results.
+- Source code is sent as text and never executed. Credential-like assignments and bearer tokens are redacted before prompting and before showing findings.
+- Postmortem drafting formats incident details and an engineer-confirmed outcome. A separate confirmation form records the actual cause, successful steps, failed attempts, and lessons through the existing Hindsight service; model-generated analysis is not recorded as a factual outcome.
+- Inputs are supplied manually. GitHub/GitLab, CI vendors, cloud/observability providers, browser telemetry, and deployment systems are not connected. AI findings can still be wrong and require engineer review; these workflows do not replace dedicated security scanners or SRE judgment.
 
 ## Configuration
 `.env` (git-ignored) holds:
@@ -170,7 +177,7 @@ python -m scripts.seed_memory --bank-id shopfast-incidents-demo3
 Then set `HINDSIGHT_BANK_ID=shopfast-incidents-demo3` in `.env`. Old banks stay untouched. Bank IDs must match `^[a-z0-9][a-z0-9-]{2,63}$`.
 
 ## Seed data
-25 synthetic incidents in `data/seed_incidents.json`:
+31 synthetic incidents in `data/seed_incidents.json`:
 
 | Pattern | Incidents | Demo role |
 |---|---|---|
@@ -178,6 +185,9 @@ Then set `HINDSIGHT_BANK_ID=shopfast-incidents-demo3` in `.env`. Old banks stay 
 | Redis timeout | INC-1051, INC-1088, INC-1129 | strong recall |
 | Auth token expiry | INC-1075, INC-1098, INC-1141 | strong recall |
 | Payment gateway timeout | none | learning moment |
+| Payment credential rejection | INC-1160, INC-1164 | credential rotation and secret-scope failures |
+| Inventory reservation conflict | INC-1161, INC-1165 | stale stock and orphaned reservation holds |
+| Shipping provider outage | INC-1162, INC-1166 | carrier failover and idempotent queue recovery |
 | Other realistic incidents | 16 | noise; shows ranking |
 
 ## Trade-offs
