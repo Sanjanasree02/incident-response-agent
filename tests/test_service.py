@@ -3,6 +3,7 @@
 import pytest
 
 from agent.llm import LLMError
+from agent.lifecycle import LifecycleAssessment
 from agent.memory import IncidentMemoryError
 from agent.models import Incident, LearnedPattern, Outcome, SimilarIncident, Suggestion
 from agent.service import IncidentService
@@ -42,6 +43,7 @@ class FakeMemory:
 class FakeAdvisor:
     def __init__(self, error=None):
         self.calls = []
+        self.lifecycle_calls = []
         self._error = error
 
     def suggest(self, incident, similar, patterns, rules=()):
@@ -51,6 +53,12 @@ class FakeAdvisor:
             raise self._error
         return Suggestion(similar_incidents=similar, learned_patterns=patterns, probable_root_cause="Pool",
                           fix_steps=["Roll back (INC-1042)"], confidence="high", memory_used=bool(similar))
+
+    def analyze_lifecycle(self, module, input_text):
+        self.lifecycle_calls.append((module, input_text))
+        if self._error:
+            raise self._error
+        return LifecycleAssessment(module=module, summary="Agent analyzed supplied evidence.")
 
 
 def test_analyze_recalls_memory_then_asks_advisor():
@@ -93,6 +101,14 @@ def test_record_outcome_retains_it():
     memory = FakeMemory()
     IncidentService(memory, FakeAdvisor()).record_outcome(INCIDENT, OUTCOME)
     assert memory.calls == [("retain_outcome", INCIDENT, OUTCOME)]
+
+
+def test_analyze_lifecycle_delegates_to_configured_agent():
+    advisor = FakeAdvisor()
+    service = IncidentService(FakeMemory(), advisor)
+    result = service.analyze_lifecycle("CI/CD pipeline intelligence", "Build failed: missing symbol")
+    assert result.summary == "Agent analyzed supplied evidence."
+    assert advisor.lifecycle_calls == [("CI/CD pipeline intelligence", "Build failed: missing symbol")]
 
 
 # act -> verify -> learn

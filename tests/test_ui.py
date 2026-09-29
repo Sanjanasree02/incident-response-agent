@@ -7,6 +7,7 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from agent import config
+from agent.lifecycle import LifecycleAssessment, LifecycleFinding
 from agent.memory import IncidentMemoryError
 from agent.models import (LearnedPattern, Postmortem, RemediationAction, RemediationAttempt, SimilarIncident,
                           Suggestion, TeamRule)
@@ -35,6 +36,7 @@ class FakeService:
         self._postmortem_error, self._runbook = postmortem_error, runbook
         self.rules = [TeamRule(name="prefer-rollback-after-change", content="Prefer rolling back a recent change.",
                                priority=20)]
+        self.lifecycle_calls = []
         self._detected, self._detect_error = detected, detect_error
         self._suggestion = suggestion or _suggestion()
         self._next = next_suggestion
@@ -47,6 +49,19 @@ class FakeService:
         if self._error:
             raise self._error
         return self._next if tried_actions and self._next else self._suggestion
+
+    def analyze_lifecycle(self, module, input_text):
+        self.lifecycle_calls.append((module, input_text))
+        if module == "CI/CD pipeline intelligence":
+            finding = LifecycleFinding(severity="high", title="Agent found a missing type reference",
+                                       evidence="cannot find symbol CustomerDTO",
+                                       recommendation="Check the renamed type and its imports.")
+        else:
+            finding = LifecycleFinding(severity="medium", title="Agent reviewed the supplied change",
+                                       evidence="db.query(Order).get(order.id)",
+                                       recommendation="Batch this lookup if it executes once per order.")
+        return LifecycleAssessment(module=module, summary="Agent analysis based on the supplied evidence.",
+                                   findings=[finding])
 
     def detect_incident(self):
         if self._detect_error:
@@ -115,7 +130,65 @@ def test_app_starts_without_errors():
     at = _app(FakeService())
     assert not at.exception
     assert [t.label for t in at.tabs] == ["Submit incident", "Record outcome", "What the agent has learned",
-                                          "Integrate"]
+                                          "Integrate", "Lifecycle modules"]
+
+
+def test_lifecycle_code_review_module_displays_evidence_and_recommendation():
+    service = FakeService()
+    at = _app(service)
+    at = at.selectbox(key="lifecycle_module").select("Development and pull request review").run()
+    at = at.button(key="lifecycle_code_analyze").click().run()
+    assert not at.exception
+    text = _all_text(at)
+    assert "Agent reviewed the supplied change" in text
+    assert "Batch this lookup" in text
+    assert service.lifecycle_calls[0][0] == "Development and pull request review"
+
+
+def test_lifecycle_pipeline_module_analyzes_sample_log():
+    service = FakeService()
+    at = _app(service)
+    at = at.selectbox(key="lifecycle_module").select("CI/CD pipeline intelligence").run()
+    at = at.button(key="lifecycle_pipeline_analyze").click().run()
+    assert not at.exception
+    assert "Agent found a missing type reference" in _all_text(at)
+    assert "Check the renamed type" in _all_text(at)
+    assert "cannot find symbol CustomerDTO" in service.lifecycle_calls[0][1]
+
+
+def test_lifecycle_outcome_is_recorded_only_after_engineer_enters_actual_cause():
+    service = FakeService()
+    at = _app(service)
+    at = at.selectbox(key="lifecycle_module").select("CI/CD pipeline intelligence").run()
+    at = at.button(key="lifecycle_pipeline_analyze").click().run()
+    incident = at.session_state["lifecycle_incident"]
+    assert service.recorded == []
+    at.text_area(key=f"lifecycle_root_cause_{incident.incident_id}").input("CustomerDTO was renamed without updating imports")
+    at.text_area(key=f"lifecycle_worked_{incident.incident_id}").input("Update the stale import and rerun compile tests")
+    at = at.button(key=f"lifecycle_record_{incident.incident_id}").click().run()
+    assert not at.exception
+    [(recorded_incident, outcome)] = service.recorded
+    assert recorded_incident.incident_id == outcome.incident_id == incident.incident_id
+    assert outcome.actual_root_cause == "CustomerDTO was renamed without updating imports"
+    assert outcome.steps_that_worked == ["Update the stale import and rerun compile tests"]
+
+
+def test_postmortem_learning_is_recorded_only_after_human_confirmation():
+    service = FakeService()
+    at = _app(service)
+    at = at.selectbox(key="lifecycle_module").select("Post-incident review").run()
+    at.text_area(key="postmortem_root_cause").input("Stale payment provider credential")
+    at.text_area(key="postmortem_resolution").input("Refresh provider key")
+    at.text_area(key="postmortem_timeline").input("10:00 alert\n10:12 recovered")
+    at = at.button(key="lifecycle_postmortem_generate").click().run()
+    assert not at.exception
+    assert service.recorded == []
+    assert at.button(key="record_postmortem_learning")
+    at = at.button(key="record_postmortem_learning").click().run()
+    assert not at.exception
+    [(incident, outcome)] = service.recorded
+    assert incident.incident_id == outcome.incident_id
+    assert outcome.actual_root_cause == "Stale payment provider credential"
 
 
 def test_submit_sends_incident_and_shows_suggestion():

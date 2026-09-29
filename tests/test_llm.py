@@ -106,6 +106,45 @@ def test_prompt_says_when_no_similar_incidents_exist():
     assert "no similar past incidents" in _prompt(client).lower()
 
 
+def test_lifecycle_analysis_uses_model_and_returns_grounded_findings():
+    source = "[ERROR] cannot find symbol CustomerDTO"
+    client = FakeGroq({"summary": "Compilation failed because a referenced type is missing.", "findings": [
+        {"severity": "high", "title": "Missing type reference", "evidence": "cannot find symbol CustomerDTO",
+         "recommendation": "Check whether CustomerDTO was renamed and update the stale reference."}
+    ]})
+    result = _advisor(client).analyze_lifecycle("CI/CD pipeline intelligence", source)
+    assert result.findings[0].title == "Missing type reference"
+    assert result.findings[0].evidence in source
+    assert client.calls[0]["model"] == MODEL
+    assert "cannot find symbol CustomerDTO" in client.calls[0]["messages"][1]["content"]
+
+
+def test_lifecycle_analysis_retries_unsupported_evidence():
+    unsupported = {"summary": "Compilation references a missing type.", "findings": [
+        {"severity": "high", "title": "Missing type", "evidence": "CustomerDTO is undefined",
+         "recommendation": "Check the type name."}
+    ]}
+    grounded = {"summary": "Compilation references a missing type.", "findings": [
+        {"severity": "high", "title": "Missing type", "evidence": "cannot find symbol CustomerDTO",
+         "recommendation": "Check the type name."}
+    ]}
+    client = FakeGroq(unsupported, grounded)
+    result = _advisor(client).analyze_lifecycle("CI/CD", "error: cannot find symbol CustomerDTO")
+    assert result.findings[0].evidence == "cannot find symbol CustomerDTO"
+    assert len(client.calls) == 2
+
+
+def test_lifecycle_analysis_redacts_secrets_before_prompt_and_output():
+    client = FakeGroq({"summary": "Log contains api_key=secret-value-123", "findings": [
+        {"severity": "medium", "title": "Credential error", "evidence": "api_key=[REDACTED]",
+         "recommendation": "Rotate the exposed credential."}
+    ]})
+    result = _advisor(client).analyze_lifecycle("CI/CD", 'ERROR api_key="secret-value-123"')
+    prompt = client.calls[0]["messages"][1]["content"]
+    assert "secret-value-123" not in prompt
+    assert "secret-value-123" not in result.summary
+
+
 # response
 
 def test_valid_answer_becomes_suggestion():

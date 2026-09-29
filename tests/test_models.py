@@ -57,8 +57,8 @@ def test_invalid_incident_rejected(overrides):
 
 def test_seed_file_is_valid_and_has_no_payment_gateway_history():
     incidents = load_seed_incidents()
-    assert len(incidents) == 25
-    assert len({i.incident_id for i in incidents}) == 25
+    assert len(incidents) == 31
+    assert len({i.incident_id for i in incidents}) == 31
     assert not any("paygate" in i.error_log.lower() for i in incidents)
 
 
@@ -144,6 +144,12 @@ def test_seed_has_patterns_described_in_design():
         {"INC-1042", "INC-1067", "INC-1113"},  # DB connection pool exhaustion
         {"INC-1051", "INC-1088", "INC-1129"},  # Redis timeout
         {"INC-1075", "INC-1098", "INC-1141"},  # Auth token expiry
+    ):
+        assert pattern <= ids
+    for pattern in (
+        {"INC-1160", "INC-1164"},  # payment credential rejection
+        {"INC-1161", "INC-1165"},  # inventory reservation conflict
+        {"INC-1162", "INC-1166"},  # shipping provider outage
     ):
         assert pattern <= ids
 

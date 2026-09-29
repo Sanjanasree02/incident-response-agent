@@ -88,6 +88,9 @@ def test_checkout_rejects_bad_input(client, body, status):
     (Fault.CERT_EXPIRED, "post", "/login", {"username": "alice", "password": "secret"}, 502),
     (Fault.SEARCH_DISK_FULL, "get", "/products", None, 503),
     (Fault.PROMO_CONFIG_BROKEN, "post", "/checkout", ITEMS, 500),
+    (Fault.PAYMENT_CREDENTIAL_REJECTED, "post", "/checkout", ITEMS, 502),
+    (Fault.INVENTORY_RESERVATION_CONFLICT, "post", "/checkout", ITEMS, 409),
+    (Fault.SHIPPING_PROVIDER_UNAVAILABLE, "post", "/checkout", ITEMS, 503),
 ], ids=lambda v: v.value if isinstance(v, Fault) else None)
 def test_fault_fails_endpoint_with_its_log_line(client, caplog, fault, method, path, body, status):
     _enable(client, fault)
@@ -109,6 +112,9 @@ def test_fault_fails_endpoint_with_its_log_line(client, caplog, fault, method, p
     (Fault.CERT_EXPIRED, ("post", "/checkout", ITEMS)),
     (Fault.SEARCH_DISK_FULL, ("post", "/cart/items", {"product_id": "sku-100", "quantity": 1})),
     (Fault.PROMO_CONFIG_BROKEN, ("post", "/login", {"username": "alice", "password": "secret"})),
+    (Fault.PAYMENT_CREDENTIAL_REJECTED, ("post", "/login", {"username": "alice", "password": "secret"})),
+    (Fault.INVENTORY_RESERVATION_CONFLICT, ("post", "/login", {"username": "alice", "password": "secret"})),
+    (Fault.SHIPPING_PROVIDER_UNAVAILABLE, ("post", "/login", {"username": "alice", "password": "secret"})),
 ], ids=lambda v: v.value if isinstance(v, Fault) else None)
 def test_fault_does_not_break_other_endpoints(client, fault, unaffected):
     _enable(client, fault)

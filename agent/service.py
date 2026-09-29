@@ -6,6 +6,7 @@ from agent.actions import ShopFastClient, ShopFastError
 from agent.evidence import action_evidence
 from agent.intake import incident_from_alert
 from agent.llm import IncidentAdvisor, LLMError
+from agent.lifecycle import LifecycleAssessment
 from agent.memory import IncidentMemory, IncidentMemoryError
 from agent.models import (Incident, Outcome, Postmortem, RemediationAction, RemediationAttempt, Suggestion,
                           TeamRule)
@@ -120,6 +121,10 @@ class IncidentService:
             suggestion = self._memory_only(similar, patterns, exc)
         evidence = action_evidence(suggestion.similar_incidents, [a.name for a in actions])
         return suggestion.model_copy(update={"action_evidence": evidence})
+
+    def analyze_lifecycle(self, module: str, input_text: str) -> LifecycleAssessment:
+        """Ask the configured AI advisor to analyze lifecycle evidence."""
+        return self._advisor.analyze_lifecycle(module, input_text)
 
     @staticmethod
     def _memory_only(similar, patterns, exc: LLMError) -> Suggestion:

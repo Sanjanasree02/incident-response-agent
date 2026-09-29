@@ -27,6 +27,7 @@ from agent.service import IncidentService  # noqa: E402
 from agent.store import DEFAULT_DB, IncidentStore, OpenIncident  # noqa: E402
 from shopfast.faults import FAULT_LOGS, Fault  # noqa: E402
 from ui import secrets_check  # noqa: E402
+from ui.lifecycle import show_lifecycle_modules  # noqa: E402
 
 EVAL_RESULTS = Path(__file__).resolve().parent.parent / "data" / "evaluation_results.json"
 CURVE_RESULTS = Path(__file__).resolve().parent.parent / "data" / "learning_curve.json"
@@ -608,8 +609,9 @@ def home_page() -> None:
     restore()
     if os.getenv("DEMO_CONTROLS", "").strip() == "1":
         demo_panel()
-    submit, outcome, learned, integrate = st.tabs(["Submit incident", "Record outcome", "What the agent has learned",
-                                                   "Integrate"])
+    submit, outcome, learned, integrate, lifecycle = st.tabs(
+        ["Submit incident", "Record outcome", "What the agent has learned", "Integrate", "Lifecycle modules"]
+    )
     with submit:
         submit_tab(incident_service)
     with outcome:
@@ -618,6 +620,8 @@ def home_page() -> None:
         learned_tab(incident_service)
     with integrate:
         integrate_tab()
+    with lifecycle:
+        show_lifecycle_modules(incident_service)
 
 
 REPO_URL = "https://github.com/Sanjanasree02/incident-response-agent"
