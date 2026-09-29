@@ -675,3 +675,26 @@ def test_demo_controls_report_a_sleeping_shop(monkeypatch):
     at = _demo_app(httpx.Client(transport=httpx.MockTransport(refuse), base_url="http://shop.test"))
     assert not at.exception
     assert "waking up" in _all_text(at)
+
+
+def test_streamlit_chrome_is_hidden_but_top_nav_stays(monkeypatch):
+    styles = []
+    real_html = st.html
+
+    def spy(body, *args, **kwargs):
+        styles.append(str(body))
+        return real_html(body, *args, **kwargs)
+
+    monkeypatch.setattr(st, "html", spy)
+    at = _app(FakeService())
+    assert not at.exception
+    css = "\n".join(styles)
+    for testid in ("stToolbarActions", "stMainMenu", "stDecoration", "stElementToolbar"):
+        assert f'[data-testid="{testid}"]' in css and "display: none" in css
+    assert '[data-testid="stHeader"]' not in css  # the header holds the top nav, so it must stay
+
+
+def test_streamlit_config_uses_minimal_toolbar():
+    import tomllib
+    cfg = tomllib.loads((Path(APP).parent.parent / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
+    assert cfg["client"]["toolbarMode"] == "minimal"

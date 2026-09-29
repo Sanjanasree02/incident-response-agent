@@ -1,0 +1,6 @@
+[client]
+# Viewers get no developer options in the toolbar menu.
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

@@ -632,12 +632,20 @@ NAV_CENTRE_CSS = """<style>
                                                                                justify-content: flex-end; }
 }
 </style>"""
+# Hide Streamlit's own chrome: the toolbar actions (Share, star, edit, GitHub, menu), the coloured top line, the
+# footer and the fullscreen/download toolbar on tables and charts. The header stays: it holds the top nav.
+# Community Cloud's profile badge and "Manage app" live outside the app's iframe, so no app code can hide them.
+HIDE_CHROME_CSS = """<style>
+[data-testid="stToolbarActions"], [data-testid="stMainMenu"], [data-testid="stDecoration"],
+[data-testid="stElementToolbar"], [data-testid="StyledFullScreenButton"], footer { display: none !important; }
+</style>"""
 
 st.set_page_config(page_title="Incident Response Agent", layout="wide")
 secrets_check.to_env(read_secrets()[0])  # Streamlit Community Cloud
 # One bar at the top: logo, Home, Concept, GitHub (external: opens in a new tab), then Streamlit's own toolbar.
 st.logo(str(LOGO), size="large")
 st.html(NAV_CENTRE_CSS)
+st.html(HIDE_CHROME_CSS)
 page = st.navigation([
     st.Page(home_page, title="Home", icon=":material/home:", default=True),
     st.Page("concept.py", title="Concept", icon=":material/account_tree:", url_path="concept"),
