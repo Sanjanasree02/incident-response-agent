@@ -26,35 +26,20 @@ from agent.models import (Incident, Outcome, Postmortem, RemediationAttempt, Sev
 from agent.service import IncidentService  # noqa: E402
 from agent.store import DEFAULT_DB, IncidentStore, OpenIncident  # noqa: E402
 from shopfast.faults import FAULT_LOGS, Fault  # noqa: E402
+from ui import secrets_check  # noqa: E402
 
 EVAL_RESULTS = Path(__file__).resolve().parent.parent / "data" / "evaluation_results.json"
 CURVE_RESULTS = Path(__file__).resolve().parent.parent / "data" / "learning_curve.json"
 
 
 @st.cache_resource
-def secret_names() -> list[str]:
-    """Names (never values) of the Streamlit secrets the app received, for configuration errors."""
+def read_secrets() -> tuple[dict, str]:
+    """Streamlit secrets and a names-only description of them; ({}, reason) when there are none or they are invalid."""
     try:
         items = st.secrets.to_dict()
-    except Exception:  # no secrets.toml: a local run configured by .env
-        return []
-    names = []
-    for key, value in items.items():
-        names += list(value) if isinstance(value, dict) else [key]
-    return sorted(names)
-
-
-def secrets_to_env() -> None:
-    """Streamlit Community Cloud: make secrets visible as environment variables, which the app reads.
-    Streamlit already does this for top-level keys; this also covers keys under a [section] header."""
-    try:
-        items = st.secrets.to_dict()
-    except Exception:  # no secrets.toml: a local run configured by .env
-        return
-    for key, value in items.items():
-        for name, item in (value.items() if isinstance(value, dict) else [(key, value)]):
-            if isinstance(item, (str, int, float)) and not os.environ.get(name):
-                os.environ[name] = str(item)
+    except Exception as exc:  # no secrets.toml (local run with .env), or invalid TOML
+        return {}, secrets_check.problem(exc)
+    return items, secrets_check.seen(items)
 
 
 def build_service() -> IncidentService:
@@ -68,7 +53,7 @@ def get_service() -> IncidentService:
         try:
             st.session_state["service"] = build_service()
         except ConfigError as exc:
-            seen = ", ".join(secret_names()) or "none"
+            seen = read_secrets()[1]
             st.error(f"Configuration error: {exc}. Fill in .env (see .env.example) and restart. "
                      f"On Streamlit Cloud, add it under Settings > Secrets and reboot. Secrets the app can see: {seen}.")
             st.stop()
@@ -649,7 +634,7 @@ NAV_CENTRE_CSS = """<style>
 </style>"""
 
 st.set_page_config(page_title="Incident Response Agent", layout="wide")
-secrets_to_env()
+secrets_check.to_env(read_secrets()[0])  # Streamlit Community Cloud
 # One bar at the top: logo, Home, Concept, GitHub (external: opens in a new tab), then Streamlit's own toolbar.
 st.logo(str(LOGO), size="large")
 st.html(NAV_CENTRE_CSS)
