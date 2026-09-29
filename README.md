@@ -44,8 +44,8 @@ docs/       design document, demo script, project overview, pending work, conten
 ```
 
 ## Deploy
-A `render.yaml` blueprint deploys ShopFast, the storefront and the UI on Render, with a shared password and a
-"break the shop" panel for judges. Steps and limits: `docs/DEPLOY.md`.
+ShopFast and the storefront deploy on Render (`render.yaml`); the UI deploys on Streamlit Community Cloud, with a
+shared password and a "break the shop" panel for judges. Steps and limits: `docs/DEPLOY.md`.
 
 ## Setup
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
