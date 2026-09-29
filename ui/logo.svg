@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="236" height="32" viewBox="0 0 236 32">
+  <style>
+    text { fill: #31333f; font: 600 15px "Source Sans Pro", "Source Sans 3", system-ui, sans-serif; }
+    .mark { fill: #ff4b4b; }
+    @media (prefers-color-scheme: dark) { text { fill: #fafafa; } }
+  </style>
+  <rect class="mark" x="0" y="4" width="24" height="24" rx="6"/>
+  <polyline points="4,17 9,17 11,11 14,22 16,15 20,15" fill="none" stroke="#ffffff" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="32" y="21">Incident Response Agent</text>
+</svg>

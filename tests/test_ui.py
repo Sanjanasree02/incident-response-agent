@@ -549,3 +549,36 @@ def test_invalid_team_rule_is_rejected():
     at.text_area(key="rule_content").input("short")
     at = at.button(key="add_rule").click().run()
     assert any("Invalid rule" in e.value for e in at.error) and len(service.rules) == 1
+
+
+# navigation and concept page
+
+def test_top_navbar_has_home_concept_and_github(monkeypatch):
+    calls = []
+    real_navigation = st.navigation
+
+    def spy(pages, **kwargs):
+        calls.append((pages, kwargs))
+        return real_navigation(pages, **kwargs)
+
+    monkeypatch.setattr(st, "navigation", spy)
+    at = _app(FakeService())
+    assert not at.exception
+    pages, kwargs = calls[-1]
+    assert kwargs["position"] == "top"  # same bar as the logo and Streamlit's toolbar
+    assert [p.title for p in pages] == ["Home", "Concept", "GitHub"]
+    assert at.title[0].value == "Incident Response Agent"  # Home is the default, landing page
+    assert pages[2].external_url == "https://github.com/Sanjanasree02/incident-response-agent"  # opens a new tab
+
+
+def test_concept_page_explains_the_learning_loop_without_configuration(monkeypatch):
+    monkeypatch.delenv("HINDSIGHT_API_KEY", raising=False)
+    at = AppTest.from_file(APP, default_timeout=10).run()
+    at.switch_page("concept.py").run()
+    assert not at.exception
+    assert at.title[0].value == "Concept"
+    text = _all_text(at)
+    for step in ("Incident occurs", "Hindsight checks past experience", "Known incident: reuse what worked",
+                 "New incident: the LLM proposes", "Engineer approves", "Result is recorded", "Next time it knows"):
+        assert step in text
+    assert len(at.get("graphviz_chart")) == 1

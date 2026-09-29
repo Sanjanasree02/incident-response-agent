@@ -524,19 +524,43 @@ def learned_tab(service: IncidentService) -> None:
         st.text(f"- {pattern.text}")
 
 
-st.set_page_config(page_title="Incident Response Agent", layout="wide")
-st.title("Incident Response Agent")
-st.caption("Recalls past ShopFast incidents from Hindsight memory and suggests fixes.")
+def home_page() -> None:
+    st.title("Incident Response Agent")
+    st.caption("Recalls past ShopFast incidents from Hindsight memory and suggests fixes.")
 
-incident_service = get_service()
-restore()
-submit, outcome, learned, integrate = st.tabs(["Submit incident", "Record outcome", "What the agent has learned",
-                                               "Integrate"])
-with submit:
-    submit_tab(incident_service)
-with outcome:
-    outcome_tab(incident_service)
-with learned:
-    learned_tab(incident_service)
-with integrate:
-    integrate_tab()
+    incident_service = get_service()
+    restore()
+    submit, outcome, learned, integrate = st.tabs(["Submit incident", "Record outcome", "What the agent has learned",
+                                                   "Integrate"])
+    with submit:
+        submit_tab(incident_service)
+    with outcome:
+        outcome_tab(incident_service)
+    with learned:
+        learned_tab(incident_service)
+    with integrate:
+        integrate_tab()
+
+
+REPO_URL = "https://github.com/Sanjanasree02/incident-response-agent"
+LOGO = Path(__file__).resolve().parent / "logo.svg"
+# Centre the top nav links on the page. Streamlit has no option for this, so this fixed style (no user content)
+# targets its header: the links' row is centred and the right-hand toolbar gets the logo's width, so the links sit
+# at the true page centre. Wide screens only; narrow screens keep Streamlit's own layout.
+NAV_CENTRE_CSS = """<style>
+@media (min-width: 768px) {
+  [data-testid="stToolbar"] > div > div:has([data-testid="stTopNavLinkContainer"]) { justify-content: center; }
+  [data-testid="stToolbar"] > div > div:has([data-testid="stToolbarActions"]) { min-width: 252px;
+                                                                               justify-content: flex-end; }
+}
+</style>"""
+
+st.set_page_config(page_title="Incident Response Agent", layout="wide")
+# One bar at the top: logo, Home, Concept, GitHub (external: opens in a new tab), then Streamlit's own toolbar.
+st.logo(str(LOGO), size="large")
+st.html(NAV_CENTRE_CSS)
+st.navigation([
+    st.Page(home_page, title="Home", icon=":material/home:", default=True),
+    st.Page("concept.py", title="Concept", icon=":material/account_tree:", url_path="concept"),
+    st.Page(REPO_URL, title="GitHub", icon=":material/arrow_outward:"),
+], position="top").run()
