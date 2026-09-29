@@ -1,0 +1,60 @@
+# Render blueprint: ShopFast, its storefront and the agent UI, on free web services.
+# Setup steps (secrets, URLs, memory bank) are in docs/DEPLOY.md.
+services:
+  - type: web
+    name: shopfast-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn shopfast.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /docs  # always 200; customer endpoints fail on purpose while a fault is on
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: SHOPFAST_ADMIN_TOKEN  # guards /admin and /ops on the public URL
+        generateValue: true
+
+  - type: web
+    name: shopfast-storefront
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn storefront.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: SHOPFAST_URL  # https://<shopfast-api URL>, known after the first deploy
+        sync: false
+
+  - type: web
+    name: incident-agent-ui
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run ui/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: HINDSIGHT_BASE_URL
+        sync: false
+      - key: HINDSIGHT_API_KEY
+        sync: false
+      - key: HINDSIGHT_BANK_ID
+        value: shopfast-incidents-judges
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: SHOPFAST_URL  # https://<shopfast-api URL>
+        sync: false
+      - key: SHOPFAST_ADMIN_TOKEN
+        fromService:
+          type: web
+          name: shopfast-api
+          envVarKey: SHOPFAST_ADMIN_TOKEN
+      - key: UI_PASSWORD  # shared password you give the judges
+        sync: false
+      - key: DEMO_CONTROLS  # shows the "break the shop" panel
+        value: "1"
+      - key: STOREFRONT_URL  # https://<shopfast-storefront URL>, shown as a button in the demo panel
+        sync: false

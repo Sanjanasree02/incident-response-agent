@@ -582,3 +582,67 @@ def test_concept_page_explains_the_learning_loop_without_configuration(monkeypat
                  "New incident: the LLM proposes", "Engineer approves", "Result is recorded", "Next time it knows"):
         assert step in text
     assert len(at.get("graphviz_chart")) == 1
+
+
+# public deploy: password gate and demo controls
+
+def test_password_gate_blocks_until_the_right_password(monkeypatch):
+    monkeypatch.setenv("UI_PASSWORD", "judges-2026")
+    at = _app(FakeService())
+    assert not at.tabs
+    at.text_input(key="ui_password").input("wrong").run()
+    at.button(key="ui_login").click().run()
+    assert not at.tabs and "Wrong password" in _all_text(at)
+    at.text_input(key="ui_password").input("judges-2026").run()
+    at.button(key="ui_login").click().run()
+    assert [t.label for t in at.tabs][0] == "Submit incident"
+
+
+def test_no_password_configured_means_no_gate(monkeypatch):
+    monkeypatch.delenv("UI_PASSWORD", raising=False)
+    assert _app(FakeService()).tabs
+
+
+@pytest.fixture
+def shop_admin(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from shopfast import app as shop
+    monkeypatch.setattr(shop, "faults", shop.FaultRegistry())
+    return TestClient(shop.app)
+
+
+def _demo_app(shop_admin) -> AppTest:
+    at = AppTest.from_file(APP, default_timeout=10)
+    at.session_state["service"] = FakeService()
+    at.session_state["shop_admin"] = shop_admin
+    return at.run()
+
+
+def test_demo_controls_are_off_by_default(monkeypatch, shop_admin):
+    monkeypatch.delenv("DEMO_CONTROLS", raising=False)
+    assert "demo_break" not in [b.key for b in _demo_app(shop_admin).button]
+
+
+def test_demo_controls_break_and_reset_the_shop(monkeypatch, shop_admin):
+    monkeypatch.setenv("DEMO_CONTROLS", "1")
+    at = _demo_app(shop_admin)
+    assert "none, the shop is healthy" in _all_text(at)
+    at.selectbox(key="demo_fault").select("PAYMENT_GATEWAY_TIMEOUT").run()
+    at.button(key="demo_break").click().run()
+    assert shop_admin.get("/admin/faults").json()["active"] == ["PAYMENT_GATEWAY_TIMEOUT"]
+    assert "PAYMENT_GATEWAY_TIMEOUT" in _all_text(at)
+    at.button(key="demo_reset").click().run()
+    assert shop_admin.get("/admin/faults").json()["active"] == []
+
+
+def test_demo_controls_report_a_sleeping_shop(monkeypatch):
+    import httpx
+
+    def refuse(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    monkeypatch.setenv("DEMO_CONTROLS", "1")
+    at = _demo_app(httpx.Client(transport=httpx.MockTransport(refuse), base_url="http://shop.test"))
+    assert not at.exception
+    assert "waking up" in _all_text(at)

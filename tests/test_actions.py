@@ -76,3 +76,22 @@ def test_settings_build_shopfast_url(monkeypatch):
     monkeypatch.setenv("SHOPFAST_HOST", "127.0.0.1")
     monkeypatch.setenv("SHOPFAST_PORT", "8001")
     assert load_settings().shopfast_url == "http://127.0.0.1:8001"
+
+
+def test_shopfast_url_overrides_host_and_port_for_a_deployed_shop(monkeypatch):
+    monkeypatch.setattr(config, "load_dotenv", lambda: None)
+    for name in ["HINDSIGHT_BASE_URL", "HINDSIGHT_API_KEY", "GROQ_API_KEY"]:
+        monkeypatch.setenv(name, "value")
+    monkeypatch.setenv("SHOPFAST_URL", "https://shopfast-demo.onrender.com/")
+    assert load_settings().shopfast_url == "https://shopfast-demo.onrender.com"
+
+
+def test_client_sends_the_admin_token_when_configured(monkeypatch):
+    monkeypatch.setattr(config, "load_dotenv", lambda: None)
+    for name in ["HINDSIGHT_BASE_URL", "HINDSIGHT_API_KEY", "GROQ_API_KEY"]:
+        monkeypatch.setenv(name, "value")
+    monkeypatch.setenv("SHOPFAST_ADMIN_TOKEN", "tok-123")
+    client = ShopFastClient.from_settings(load_settings())
+    assert client._http.headers["X-Admin-Token"] == "tok-123"
+    monkeypatch.delenv("SHOPFAST_ADMIN_TOKEN")
+    assert "X-Admin-Token" not in ShopFastClient.from_settings(load_settings())._http.headers

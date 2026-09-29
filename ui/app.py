@@ -5,11 +5,13 @@ Incident text and LLM output go through st.text or st.code only, never markdown,
 LLM reply cannot render links or images.
 """
 
+import hmac
 import json
 import os
 import sys
 from pathlib import Path
 
+import httpx
 import streamlit as st
 from pydantic import ValidationError
 
@@ -524,12 +526,76 @@ def learned_tab(service: IncidentService) -> None:
         st.text(f"- {pattern.text}")
 
 
+# Faults with no seed history: the first detection shows a generic answer, the second one recalls the fix.
+NEW_TO_AGENT = {Fault.PAYMENT_GATEWAY_TIMEOUT, Fault.PROMO_CONFIG_BROKEN}
+
+
+def get_shop_admin() -> httpx.Client:
+    """ShopFast's fault switches, for the demo panel only (tests put a client in session state).
+    The agent's own client never gets these: it can only run allow-listed actions."""
+    if "shop_admin" not in st.session_state:
+        settings = load_settings()
+        headers = {"X-Admin-Token": settings.shopfast_admin_token} if settings.shopfast_admin_token else None
+        # 60 s: a free-tier ShopFast may be asleep and needs time to start.
+        st.session_state["shop_admin"] = httpx.Client(base_url=settings.shopfast_url, headers=headers, timeout=60.0)
+    return st.session_state["shop_admin"]
+
+
+def fault_label(value: str) -> str:
+    return f"{value} (new to the agent)" if Fault(value) in NEW_TO_AGENT else f"{value} (in past incidents)"
+
+
+def demo_panel() -> None:
+    """Lets visitors of a deployed demo break ShopFast without curl. Shown only when DEMO_CONTROLS=1."""
+    with st.expander("Demo controls: break the shop", expanded=True):
+        st.caption("Turn on a ShopFast fault, then click Detect below. These switches are for trying the demo; "
+                   "the agent itself cannot use them.")
+        if storefront := os.getenv("STOREFRONT_URL", "").strip():
+            st.link_button("Open the storefront", storefront, icon=":material/storefront:")
+        admin = get_shop_admin()
+        try:
+            active = admin.get("/admin/faults").json()["active"]
+        except (httpx.HTTPError, ValueError, KeyError):
+            st.warning("ShopFast is waking up or unreachable. Wait about a minute, then reload the page.")
+            return
+        st.text("Active faults: " + (", ".join(active) if active else "none, the shop is healthy"))
+        fault = st.selectbox("Fault", [f.value for f in Fault], format_func=fault_label, key="demo_fault")
+        left, right = st.columns(2)
+        if left.button("Break the shop", key="demo_break", type="primary"):
+            admin.post(f"/admin/faults/{fault}")
+            st.rerun()
+        if right.button("Reset the shop", key="demo_reset", disabled=not active):
+            for name in active:
+                admin.delete(f"/admin/faults/{name}")
+            st.rerun()
+
+
+def password_ok() -> bool:
+    """Shared-password gate for a public deploy (UI_PASSWORD). No password configured: no gate."""
+    expected = os.getenv("UI_PASSWORD", "").strip()
+    if not expected or st.session_state.get("authenticated"):
+        return True
+    st.title("Incident Response Agent")
+    st.caption("This demo is password protected. The password is in the project submission.")
+    with st.form("ui_login_form", border=False):  # a form, so pressing Enter in the field submits
+        password = st.text_input("Password", type="password", key="ui_password")
+        submitted = st.form_submit_button("Enter", key="ui_login")
+    if submitted:
+        if hmac.compare_digest(password.encode(), expected.encode()):
+            st.session_state["authenticated"] = True
+            st.rerun()
+        st.error("Wrong password.")
+    return False
+
+
 def home_page() -> None:
     st.title("Incident Response Agent")
     st.caption("Recalls past ShopFast incidents from Hindsight memory and suggests fixes.")
 
     incident_service = get_service()
     restore()
+    if os.getenv("DEMO_CONTROLS", "").strip() == "1":
+        demo_panel()
     submit, outcome, learned, integrate = st.tabs(["Submit incident", "Record outcome", "What the agent has learned",
                                                    "Integrate"])
     with submit:
@@ -559,8 +625,10 @@ st.set_page_config(page_title="Incident Response Agent", layout="wide")
 # One bar at the top: logo, Home, Concept, GitHub (external: opens in a new tab), then Streamlit's own toolbar.
 st.logo(str(LOGO), size="large")
 st.html(NAV_CENTRE_CSS)
-st.navigation([
+page = st.navigation([
     st.Page(home_page, title="Home", icon=":material/home:", default=True),
     st.Page("concept.py", title="Concept", icon=":material/account_tree:", url_path="concept"),
     st.Page(REPO_URL, title="GitHub", icon=":material/arrow_outward:"),
-], position="top").run()
+], position="top")
+if password_ok():
+    page.run()

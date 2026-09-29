@@ -31,7 +31,8 @@ class ShopFastClient:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "ShopFastClient":
-        return cls(httpx.Client(base_url=settings.shopfast_url, timeout=10.0))
+        headers = {"X-Admin-Token": settings.shopfast_admin_token} if settings.shopfast_admin_token else None
+        return cls(httpx.Client(base_url=settings.shopfast_url, headers=headers, timeout=10.0))
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         try:

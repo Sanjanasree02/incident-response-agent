@@ -24,6 +24,9 @@ app.mount("/static/images", StaticFiles(directory=STATIC / "images"), name="imag
 
 
 def shopfast_url() -> str:
+    """SHOPFAST_URL (a deployed shop, e.g. https://...onrender.com) wins over SHOPFAST_HOST / SHOPFAST_PORT."""
+    if url := os.getenv("SHOPFAST_URL", "").strip():
+        return url.rstrip("/")
     return f"http://{os.getenv('SHOPFAST_HOST', '127.0.0.1')}:{os.getenv('SHOPFAST_PORT', '8001')}"
 
 

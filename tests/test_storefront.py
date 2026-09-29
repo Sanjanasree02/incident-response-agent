@@ -103,6 +103,11 @@ def test_shopfast_url_from_environment(monkeypatch):
     assert store.shopfast_url() == "http://127.0.0.1:8001"
 
 
+def test_shopfast_url_overrides_host_and_port(monkeypatch):
+    monkeypatch.setenv("SHOPFAST_URL", "https://shopfast-demo.onrender.com/")
+    assert store.shopfast_url() == "https://shopfast-demo.onrender.com"
+
+
 # product images
 
 import re  # noqa: E402

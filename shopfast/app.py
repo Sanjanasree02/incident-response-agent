@@ -1,16 +1,18 @@
 """ShopFast mock API. Run: uvicorn shopfast.app:app --host 127.0.0.1 --port 8001
 
-Bind to 127.0.0.1 only: /admin/faults and /ops/actions have no auth and must stay local.
+Locally, bind to 127.0.0.1: /admin/faults and /ops/actions have no auth by default. For a public deploy, set
+SHOPFAST_ADMIN_TOKEN; those endpoints then need the header X-Admin-Token. Customer endpoints stay open.
 
 When a fault is on, the affected endpoint fails with its real-looking log line. The line is written to the
 server log and returned in the response body as "log", ready to paste into the agent UI.
 """
 
 import logging
+import os
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -79,6 +81,16 @@ def fail_if_active(*checks: Fault) -> None:
             raise FaultTriggered(fault)
 
 
+def require_admin_token(x_admin_token: str | None = Header(default=None)) -> None:
+    """Guards /admin and /ops when SHOPFAST_ADMIN_TOKEN is set; a no-op locally, where it is not."""
+    expected = os.getenv("SHOPFAST_ADMIN_TOKEN", "").strip()
+    if expected and not (x_admin_token and secrets.compare_digest(x_admin_token.encode(), expected.encode())):
+        raise HTTPException(status_code=401, detail="Missing or invalid X-Admin-Token")
+
+
+admin_only = [Depends(require_admin_token)]
+
+
 def product(product_id: str) -> dict:
     if product_id not in PRODUCTS:
         raise HTTPException(status_code=404, detail=f"Unknown product {product_id}")
@@ -113,13 +125,13 @@ def checkout(order: CheckoutRequest) -> dict:
     return {"order_id": f"ORD-{secrets.randbelow(10**8):08d}", "total": round(total, 2)}
 
 
-@app.get("/ops/actions")
+@app.get("/ops/actions", dependencies=admin_only)
 def list_actions() -> list[dict]:
     """Runbook actions the agent may propose. Which fault each one fixes is deliberately not exposed."""
     return [{"name": name, "description": action.description} for name, action in ACTIONS.items()]
 
 
-@app.post("/ops/actions/{name}")
+@app.post("/ops/actions/{name}", dependencies=admin_only)
 def run_action(name: str) -> dict:
     if name not in ACTIONS:
         raise HTTPException(status_code=404, detail=f"Unknown action {name}")
@@ -129,7 +141,7 @@ def run_action(name: str) -> dict:
     return {"action": name, "executed": True}
 
 
-@app.get("/ops/incidents/latest")
+@app.get("/ops/incidents/latest", dependencies=admin_only)
 def latest_incident() -> dict:
     """The newest failure alert, for the agent's automatic incident intake."""
     alert = alerts.latest()
@@ -138,18 +150,18 @@ def latest_incident() -> dict:
     return alert
 
 
-@app.get("/admin/faults")
+@app.get("/admin/faults", dependencies=admin_only)
 def get_faults() -> dict:
     return {"active": faults.active()}
 
 
-@app.post("/admin/faults/{fault}")
+@app.post("/admin/faults/{fault}", dependencies=admin_only)
 def enable_fault(fault: Fault) -> dict:
     faults.enable(fault)
     return {"active": faults.active()}
 
 
-@app.delete("/admin/faults/{fault}")
+@app.delete("/admin/faults/{fault}", dependencies=admin_only)
 def disable_fault(fault: Fault) -> dict:
     faults.disable(fault)
     return {"active": faults.active()}
