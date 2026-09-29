@@ -32,6 +32,31 @@ CURVE_RESULTS = Path(__file__).resolve().parent.parent / "data" / "learning_curv
 
 
 @st.cache_resource
+def secret_names() -> list[str]:
+    """Names (never values) of the Streamlit secrets the app received, for configuration errors."""
+    try:
+        items = st.secrets.to_dict()
+    except Exception:  # no secrets.toml: a local run configured by .env
+        return []
+    names = []
+    for key, value in items.items():
+        names += list(value) if isinstance(value, dict) else [key]
+    return sorted(names)
+
+
+def secrets_to_env() -> None:
+    """Streamlit Community Cloud: make secrets visible as environment variables, which the app reads.
+    Streamlit already does this for top-level keys; this also covers keys under a [section] header."""
+    try:
+        items = st.secrets.to_dict()
+    except Exception:  # no secrets.toml: a local run configured by .env
+        return
+    for key, value in items.items():
+        for name, item in (value.items() if isinstance(value, dict) else [(key, value)]):
+            if isinstance(item, (str, int, float)) and not os.environ.get(name):
+                os.environ[name] = str(item)
+
+
 def build_service() -> IncidentService:
     settings = load_settings()
     return IncidentService(IncidentMemory(settings), IncidentAdvisor(settings), ShopFastClient.from_settings(settings))
@@ -43,7 +68,9 @@ def get_service() -> IncidentService:
         try:
             st.session_state["service"] = build_service()
         except ConfigError as exc:
-            st.error(f"Configuration error: {exc}. Fill in .env (see .env.example) and restart.")
+            seen = ", ".join(secret_names()) or "none"
+            st.error(f"Configuration error: {exc}. Fill in .env (see .env.example) and restart. "
+                     f"On Streamlit Cloud, add it under Settings > Secrets and reboot. Secrets the app can see: {seen}.")
             st.stop()
     return st.session_state["service"]
 
@@ -622,6 +649,7 @@ NAV_CENTRE_CSS = """<style>
 </style>"""
 
 st.set_page_config(page_title="Incident Response Agent", layout="wide")
+secrets_to_env()
 # One bar at the top: logo, Home, Concept, GitHub (external: opens in a new tab), then Streamlit's own toolbar.
 st.logo(str(LOGO), size="large")
 st.html(NAV_CENTRE_CSS)

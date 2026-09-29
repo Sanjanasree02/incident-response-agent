@@ -229,6 +229,35 @@ def test_missing_configuration_is_shown_not_crashed(monkeypatch):
     st.cache_resource.clear()
 
 
+def test_streamlit_secrets_reach_the_app_even_under_a_section(monkeypatch):
+    """Streamlit Cloud: top-level secrets and secrets under a [section] both configure the app."""
+    st.cache_resource.clear()
+    monkeypatch.setattr(config, "load_dotenv", lambda: None)
+    for name in ("HINDSIGHT_BASE_URL", "HINDSIGHT_API_KEY", "GROQ_API_KEY", "UI_PASSWORD"):
+        monkeypatch.setenv(name, "")  # recorded by monkeypatch, so whatever the app sets is undone afterwards
+    at = AppTest.from_file(APP, default_timeout=10)
+    at.secrets["HINDSIGHT_BASE_URL"] = "https://example.test"
+    at.secrets["general"] = {"HINDSIGHT_API_KEY": "key", "GROQ_API_KEY": "key", "UI_PASSWORD": "pw"}
+    at.run()
+    assert not at.exception
+    assert at.text_input(key="ui_password")  # UI_PASSWORD from the [general] section turned the gate on
+    st.cache_resource.clear()
+
+
+def test_configuration_error_names_the_secrets_it_can_see(monkeypatch):
+    st.cache_resource.clear()
+    monkeypatch.setattr(config, "load_dotenv", lambda: None)
+    for name in ("HINDSIGHT_BASE_URL", "UI_PASSWORD"):
+        monkeypatch.setenv(name, "")
+    at = AppTest.from_file(APP, default_timeout=10)
+    at.secrets["GROQ_API_KEY"] = "gsk_do_not_show"
+    at.run()
+    message = " ".join(e.value for e in at.error)
+    assert "HINDSIGHT_BASE_URL" in message and "GROQ_API_KEY" in message
+    assert "gsk_do_not_show" not in message  # names only, never values
+    st.cache_resource.clear()
+
+
 def test_source_never_allows_unsafe_html():
     assert "unsafe_allow_html" not in Path(APP).read_text(encoding="utf-8").replace(
         "Render all user text with st.text / st.code / st.markdown without unsafe_allow_html.", "")
